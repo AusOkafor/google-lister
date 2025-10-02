@@ -1,15 +1,20 @@
 package main
 
 import (
+	"context"
 	"log"
+	"net/http"
 
 	"lister/internal/api"
 	"lister/internal/config"
 	"lister/internal/database"
 	"lister/internal/logger"
+
+	"github.com/gin-gonic/gin"
 )
 
-func main() {
+// Handler is the main entry point for Vercel
+func Handler(w http.ResponseWriter, r *http.Request) {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
@@ -28,9 +33,14 @@ func main() {
 	// Initialize API server
 	server := api.New(cfg, logger, db)
 
-	// Start server
-	logger.Info("Starting API server on port " + cfg.APIPort)
-	if err := server.Start(); err != nil {
-		logger.Fatal("Failed to start server:", err)
-	}
+	// Set Gin to release mode for production
+	gin.SetMode(gin.ReleaseMode)
+
+	// Serve the request
+	server.Router.ServeHTTP(w, r)
+}
+
+// This function is required by Vercel
+func main() {
+	// This won't be called in Vercel, but required for Go compilation
 }
