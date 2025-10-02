@@ -82,13 +82,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Generate OAuth URL
 				scopes := "read_products,write_products,read_inventory,write_inventory,read_shop"
 				state := fmt.Sprintf("%d", time.Now().Unix())
-				
+
 				// Clean the shop domain (remove .myshopify.com if present)
 				cleanDomain := request.ShopDomain
 				if strings.HasSuffix(request.ShopDomain, ".myshopify.com") {
 					cleanDomain = strings.TrimSuffix(request.ShopDomain, ".myshopify.com")
 				}
-				
+
 				authURL := fmt.Sprintf(
 					"https://%s.myshopify.com/admin/oauth/authorize?client_id=%s&scope=%s&redirect_uri=%s&state=%s",
 					cleanDomain,
