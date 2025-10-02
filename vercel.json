@@ -10,10 +10,5 @@
     }],
     "env": {
         "GO_VERSION": "1.21"
-    },
-    "functions": {
-        "api.go": {
-            "maxDuration": 30
-        }
     }
 }
