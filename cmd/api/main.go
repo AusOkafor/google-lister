@@ -12,8 +12,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var server *api.Server
+
 // Handler is the main entry point for Vercel
 func Handler(w http.ResponseWriter, r *http.Request) {
+	// Initialize server only once
+	if server == nil {
+		initServer()
+	}
+
+	// Serve the request
+	server.GetRouter().ServeHTTP(w, r)
+}
+
+func initServer() {
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
@@ -30,13 +42,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Initialize API server
-	server := api.New(cfg, logger, db)
+	server = api.New(cfg, logger, db)
 
 	// Set Gin to release mode for production
 	gin.SetMode(gin.ReleaseMode)
-
-	// Serve the request
-	server.GetRouter().ServeHTTP(w, r)
 }
 
 // This function is required by Vercel
