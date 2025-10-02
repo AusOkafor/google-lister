@@ -14,28 +14,28 @@ import (
 func Handler(w http.ResponseWriter, r *http.Request) {
 	// Set Gin to release mode for production
 	gin.SetMode(gin.ReleaseMode)
-	
+
 	// Create a simple router
 	router := gin.New()
-	
+
 	// Add basic middleware
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
-	
+
 	// Add CORS middleware
 	router.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Shopify-Topic, X-Shopify-Shop-Domain, X-Shopify-Hmac-Sha256")
-		
+
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
 		}
-		
+
 		c.Next()
 	})
-	
+
 	// Health check endpoint
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(200, gin.H{
@@ -44,18 +44,18 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			"version": "1.0.0",
 		})
 	})
-	
+
 	// API routes
 	api := router.Group("/api/v1")
 	{
 		// Products
 		api.GET("/products", func(c *gin.Context) {
 			c.JSON(200, gin.H{
-				"data": []interface{}{},
+				"data":    []interface{}{},
 				"message": "Products endpoint - ready for database integration",
 			})
 		})
-		
+
 		// Shopify routes
 		shopify := api.Group("/shopify")
 		{
@@ -81,7 +81,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Generate OAuth URL
 				scopes := "read_products,write_products,read_inventory,write_inventory,read_shop"
 				state := fmt.Sprintf("%d", time.Now().Unix())
-				
+
 				authURL := fmt.Sprintf(
 					"https://%s.myshopify.com/admin/oauth/authorize?client_id=%s&scope=%s&redirect_uri=%s&state=%s",
 					request.ShopDomain,
@@ -97,7 +97,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					"message":  "Redirect user to the auth_url to complete OAuth flow",
 				})
 			})
-			
+
 			// Shopify OAuth Callback
 			shopify.GET("/callback", func(c *gin.Context) {
 				code := c.Query("code")
@@ -112,7 +112,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Get Shopify credentials
 				clientID := os.Getenv("SHOPIFY_CLIENT_ID")
 				clientSecret := os.Getenv("SHOPIFY_CLIENT_SECRET")
-				
+
 				if clientID == "" || clientSecret == "" {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Shopify credentials not configured"})
 					return
@@ -126,7 +126,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					"note":    "Token exchange implementation needed",
 				})
 			})
-			
+
 			// Shopify Webhook
 			shopify.POST("/webhook", func(c *gin.Context) {
 				// Get webhook topic
@@ -154,21 +154,21 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON payload"})
 						return
 					}
-					
+
 					c.JSON(http.StatusOK, gin.H{
-						"message": "Product webhook processed",
-						"topic":   topic,
-						"shop":    shopDomain,
+						"message":    "Product webhook processed",
+						"topic":      topic,
+						"shop":       shopDomain,
 						"product_id": productData["id"],
 					})
-					
+
 				case "products/delete":
 					c.JSON(http.StatusOK, gin.H{
 						"message": "Product delete webhook processed",
 						"topic":   topic,
 						"shop":    shopDomain,
 					})
-					
+
 				default:
 					c.JSON(http.StatusOK, gin.H{
 						"message": "Webhook received but not processed",
@@ -176,20 +176,20 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					})
 				}
 			})
-			
+
 			// Product Sync
 			shopify.POST("/:id/sync", func(c *gin.Context) {
 				connectorID := c.Param("id")
-				
+
 				c.JSON(http.StatusOK, gin.H{
-					"message": "Product sync initiated",
+					"message":      "Product sync initiated",
 					"connector_id": connectorID,
-					"note": "Database integration needed for full sync",
+					"note":         "Database integration needed for full sync",
 				})
 			})
 		}
 	}
-	
+
 	// Serve the request
 	router.ServeHTTP(w, r)
 }
