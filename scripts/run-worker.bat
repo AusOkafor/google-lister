@@ -1,0 +1,3 @@
+@echo off
+echo Starting Lister worker...
+go run cmd/worker/main.go

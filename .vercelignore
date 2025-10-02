@@ -1,0 +1,25 @@
+# Dependencies
+vendor/
+go.sum
+
+# Development files
+.env
+*.log
+
+# Database files
+*.db
+*.sqlite
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+*_test.go
+test-*

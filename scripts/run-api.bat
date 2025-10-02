@@ -1,0 +1,3 @@
+@echo off
+echo Starting Lister API server...
+go run cmd/api/main.go

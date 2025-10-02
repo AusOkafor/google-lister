@@ -1,0 +1,231 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-go"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Canonical Product Model
+model Product {
+  id          String   @id @default(cuid())
+  externalId  String   @map("external_id")
+  sku         String   @unique
+  title       String
+  description String?
+  brand       String?
+  gtin        String?
+  mpn         String?
+  category    String?
+  price       Decimal  @db.Decimal(10, 2)
+  currency    String   @default("USD")
+  availability ProductAvailability @default(IN_STOCK)
+  images      Json     // Array of image URLs
+  variants    Json?    // Array of variant objects
+  shipping    Json?    // Shipping information
+  taxClass    String?  @map("tax_class")
+  customLabels Json?   @map("custom_labels") // Array of custom labels
+  metadata    Json?    // Free-form key/value metadata
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  issues      Issue[]
+  feedVariants FeedVariant[]
+  abTests     ABTest[] @relation("ProductABTests")
+
+  @@map("products")
+}
+
+enum ProductAvailability {
+  IN_STOCK
+  OUT_OF_STOCK
+  PREORDER
+  BACKORDER
+}
+
+// Feed Variants for A/B Testing
+model FeedVariant {
+  id             String   @id @default(cuid())
+  name           String
+  productId      String   @map("product_id")
+  transformation Json     // Transformation rules (JSON/YAML)
+  status         VariantStatus @default(DRAFT)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  abTests        ABTest[] @relation("VariantA")
+  abTestsB       ABTest[] @relation("VariantB")
+
+  @@map("feed_variants")
+}
+
+enum VariantStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+// Issues and Diagnostics
+model Issue {
+  id            String     @id @default(cuid())
+  productId     String     @map("product_id")
+  channel       String     // Google, Bing, Meta, etc.
+  code          String     // Error code from channel
+  severity      IssueSeverity
+  explanation String     // Plain-English explanation
+  suggestedFix  String?    @map("suggested_fix")
+  confidence    Float?     // AI confidence score (0-1)
+  isResolved    Boolean    @default(false) @map("is_resolved")
+  resolvedAt    DateTime?  @map("resolved_at")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  // Relations
+  product       Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("issues")
+}
+
+enum IssueSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// A/B Testing
+model ABTest {
+  id              String      @id @default(cuid())
+  name            String
+  productId       String      @map("product_id")
+  variantAId      String      @map("variant_a_id")
+  variantBId      String      @map("variant_b_id")
+  status          ABTestStatus @default(ACTIVE)
+  impressions     Int         @default(0)
+  clicks          Int         @default(0)
+  conversions     Int         @default(0)
+  roas            Decimal?    @db.Decimal(10, 4) // Return on Ad Spend
+  winner          String?     // variantAId or variantBId
+  confidence      Float?      // Statistical confidence
+  startedAt       DateTime    @default(now()) @map("started_at")
+  endedAt         DateTime?   @map("ended_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  product         Product     @relation("ProductABTests", fields: [productId], references: [id], onDelete: Cascade)
+  variantA        FeedVariant @relation("VariantA", fields: [variantAId], references: [id])
+  variantB        FeedVariant @relation("VariantB", fields: [variantBId], references: [id])
+
+  @@map("ab_tests")
+}
+
+enum ABTestStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+// Connectors
+model Connector {
+  id          String         @id @default(cuid())
+  name        String
+  type        ConnectorType
+  status      ConnectorStatus @default(INACTIVE)
+  config      Json           // Connector-specific configuration
+  credentials Json?          // Encrypted credentials
+  lastSync    DateTime?      @map("last_sync")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  @@map("connectors")
+}
+
+enum ConnectorType {
+  SHOPIFY
+  WOOCOMMERCE
+  MAGENTO
+  BIGCOMMERCE
+  CSV
+  API
+}
+
+enum ConnectorStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+  SYNCING
+}
+
+// Channels (Google, Bing, Meta, etc.)
+model Channel {
+  id          String        @id @default(cuid())
+  name        String
+  type        ChannelType
+  status      ChannelStatus @default(INACTIVE)
+  config      Json          // Channel-specific configuration
+  credentials Json?         // Encrypted credentials
+  lastSync    DateTime?     @map("last_sync")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  @@map("channels")
+}
+
+enum ChannelType {
+  GOOGLE_MERCHANT_CENTER
+  BING_SHOPPING
+  META_CATALOG
+  PINTEREST_CATALOG
+  TIKTOK_SHOPPING
+}
+
+enum ChannelStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+  SYNCING
+}
+
+// Organizations and Users
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  plan      String   @default("free")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  users     User[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String
+  organizationId String   @map("organization_id")
+  role           UserRole @default(MEMBER)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  MEMBER
+  VIEWER
+}
