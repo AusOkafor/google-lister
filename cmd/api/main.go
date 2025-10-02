@@ -26,7 +26,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	// Initialize database
 	db, err := database.New(cfg.DatabaseURL)
 	if err != nil {
-		logger.Fatal("Failed to connect to database:", err)
+		log.Fatal("Failed to connect to database:", err)
 	}
 
 	// Initialize API server
@@ -36,7 +36,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	gin.SetMode(gin.ReleaseMode)
 
 	// Serve the request
-	server.Router.ServeHTTP(w, r)
+	server.GetRouter().ServeHTTP(w, r)
 }
 
 // This function is required by Vercel

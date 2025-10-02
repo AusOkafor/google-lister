@@ -123,3 +123,8 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.logger.Info("Shutting down server...")
 	return s.server.Shutdown(ctx)
 }
+
+// GetRouter returns the Gin router for Vercel
+func (s *Server) GetRouter() *gin.Engine {
+	return s.router
+}
