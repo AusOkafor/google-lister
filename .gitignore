@@ -1,0 +1,81 @@
+# Environment variables
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+env.*
+*.env
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+database.db
+
+# Logs
+*.log
+logs/
+log/
+
+# Dependencies
+vendor/
+node_modules/
+
+# Build outputs
+main
+main.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Test files
+*_test.go
+test-*
+coverage/
+*.cover
+*.out
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Credentials and secrets
+secrets/
+credentials/
+*.pem
+*.key
+*.crt
+*.p12
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Runtime files
+*.pid
+*.sock
+
+# Go specific
+go.work
+go.work.sum
