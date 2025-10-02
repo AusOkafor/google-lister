@@ -6,6 +6,9 @@
 .env.test
 env.*
 *.env
+env.example
+env.vercel
+env.template
 
 # Database files
 *.db
