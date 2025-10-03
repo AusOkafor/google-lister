@@ -725,22 +725,17 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					for _, img := range product.Images {
 						imageURLs = append(imageURLs, img.URL)
 					}
-					
+
 					// Convert variants to JSON
 					variantsJSON, _ := json.Marshal(product.Variants)
 					metafieldsJSON, _ := json.Marshal(product.Metafields)
-					
+
 					// Convert Go slice to PostgreSQL array format
 					imageURLsArray := "{" + strings.Join(imageURLs, ",") + "}"
-					
+
 					_, err := db.Exec(`
 						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status)
 						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-						ON CONFLICT (connector_id, external_id) DO UPDATE SET
-							title = EXCLUDED.title,
-							description = EXCLUDED.description,
-							price = EXCLUDED.price,
-							updated_at = NOW()
 					`, connectorID, fmt.Sprintf("%d", product.ID), product.Title, product.Description, price, "USD", sku, product.Vendor, product.ProductType, 
 					   imageURLsArray, string(variantsJSON), string(metafieldsJSON), "ACTIVE")
 
