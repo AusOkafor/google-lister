@@ -379,14 +379,150 @@ func generateInstagramCSV(products []map[string]interface{}) string {
 	return csv
 }
 
-// AI-Powered Helper Functions
+// AI-Powered Helper Functions with OpenRouter Integration
 
-// optimizeProductTitle generates SEO-optimized product titles
+// OpenRouter AI Configuration
+const (
+	OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+	OPENROUTER_MODEL    = "meta-llama/llama-3.1-8b-instruct:free" // Free model for cost efficiency
+)
+
+// OpenRouterRequest represents the request structure for OpenRouter API
+type OpenRouterRequest struct {
+	Model    string                 `json:"model"`
+	Messages []OpenRouterMessage    `json:"messages"`
+	MaxTokens int                   `json:"max_tokens,omitempty"`
+	Temperature float64             `json:"temperature,omitempty"`
+}
+
+type OpenRouterMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type OpenRouterResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+// callOpenRouterAI makes a request to OpenRouter AI API
+func callOpenRouterAI(prompt string, maxTokens int, temperature float64) (string, error) {
+	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	if apiKey == "" {
+		return "", fmt.Errorf("OPENROUTER_API_KEY not configured")
+	}
+
+	request := OpenRouterRequest{
+		Model:       OPENROUTER_MODEL,
+		Messages:    []OpenRouterMessage{{Role: "user", Content: prompt}},
+		MaxTokens:   maxTokens,
+		Temperature: temperature,
+	}
+
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", OPENROUTER_BASE_URL, strings.NewReader(string(jsonData)))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("API request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var response OpenRouterResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", fmt.Errorf("failed to parse response: %v", err)
+	}
+
+	if response.Error != nil {
+		return "", fmt.Errorf("API error: %s", response.Error.Message)
+	}
+
+	if len(response.Choices) == 0 {
+		return "", fmt.Errorf("no response from AI")
+	}
+
+	return strings.TrimSpace(response.Choices[0].Message.Content), nil
+}
+
+// optimizeProductTitle generates SEO-optimized product titles using hybrid approach
 func optimizeProductTitle(title, description, brand, category, keywords string, maxLength int) string {
 	if maxLength == 0 {
 		maxLength = 60 // Default SEO-friendly length
 	}
 
+	// Try AI optimization first
+	aiTitle, err := optimizeTitleWithAI(title, description, brand, category, keywords, maxLength)
+	if err == nil && aiTitle != "" {
+		return aiTitle
+	}
+
+	// Fallback to rule-based optimization
+	return optimizeTitleWithRules(title, description, brand, category, keywords, maxLength)
+}
+
+// optimizeTitleWithAI uses OpenRouter AI for title optimization
+func optimizeTitleWithAI(title, description, brand, category, keywords string, maxLength int) (string, error) {
+	prompt := fmt.Sprintf(`You are an expert e-commerce SEO specialist. Optimize this product title for maximum search visibility and conversion.
+
+Original Title: "%s"
+Description: "%s"
+Brand: "%s"
+Category: "%s"
+Keywords: "%s"
+Max Length: %d characters
+
+Requirements:
+- Include brand name if not present
+- Add relevant keywords naturally
+- Keep under %d characters
+- Make it compelling and SEO-friendly
+- Use title case
+- Avoid excessive punctuation
+
+Return ONLY the optimized title, no explanations:`, title, description, brand, category, keywords, maxLength, maxLength)
+
+	aiTitle, err := callOpenRouterAI(prompt, 50, 0.7)
+	if err != nil {
+		return "", err
+	}
+
+	// Clean and validate AI response
+	aiTitle = strings.TrimSpace(aiTitle)
+	if len(aiTitle) > maxLength {
+		aiTitle = aiTitle[:maxLength-3] + "..."
+	}
+
+	return aiTitle, nil
+}
+
+// optimizeTitleWithRules provides rule-based fallback for title optimization
+func optimizeTitleWithRules(title, description, brand, category, keywords string, maxLength int) string {
 	// Clean and prepare base title
 	baseTitle := strings.TrimSpace(title)
 	if baseTitle == "" {
@@ -426,7 +562,7 @@ func optimizeProductTitle(title, description, brand, category, keywords string, 
 	return baseTitle
 }
 
-// enhanceProductDescription creates compelling product descriptions
+// enhanceProductDescription creates compelling product descriptions using hybrid approach
 func enhanceProductDescription(title, description, brand, category string, price float64, style, length string) string {
 	if style == "" {
 		style = "marketing"
@@ -435,6 +571,49 @@ func enhanceProductDescription(title, description, brand, category string, price
 		length = "medium"
 	}
 
+	// Try AI enhancement first
+	aiDescription, err := enhanceDescriptionWithAI(title, description, brand, category, price, style, length)
+	if err == nil && aiDescription != "" {
+		return aiDescription
+	}
+
+	// Fallback to rule-based enhancement
+	return enhanceDescriptionWithRules(title, description, brand, category, price, style, length)
+}
+
+// enhanceDescriptionWithAI uses OpenRouter AI for description enhancement
+func enhanceDescriptionWithAI(title, description, brand, category string, price float64, style, length string) (string, error) {
+	prompt := fmt.Sprintf(`You are an expert e-commerce copywriter. Create a compelling product description that converts browsers into buyers.
+
+Product: "%s"
+Original Description: "%s"
+Brand: "%s"
+Category: "%s"
+Price: $%.2f
+Style: %s
+Length: %s
+
+Requirements:
+- Write in %s style (marketing/technical/casual)
+- Make it %s length (short/medium/long)
+- Include emotional triggers and benefits
+- Add compelling call-to-action
+- Use emojis appropriately
+- Focus on customer benefits, not just features
+- Make it scannable and engaging
+
+Return ONLY the enhanced description, no explanations:`, title, description, brand, category, price, style, length, style, length)
+
+	aiDescription, err := callOpenRouterAI(prompt, 300, 0.8)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(aiDescription), nil
+}
+
+// enhanceDescriptionWithRules provides rule-based fallback for description enhancement
+func enhanceDescriptionWithRules(title, description, brand, category string, price float64, style, length string) string {
 	// Clean existing description
 	cleanDesc := strings.TrimSpace(description)
 	if cleanDesc == "" {
@@ -495,8 +674,59 @@ func enhanceProductDescription(title, description, brand, category string, price
 	return enhanced.String()
 }
 
-// suggestProductCategory provides AI-powered category suggestions
+// suggestProductCategory provides AI-powered category suggestions using hybrid approach
 func suggestProductCategory(title, description, brand, currentCategory string) []map[string]interface{} {
+	// Try AI categorization first
+	aiSuggestions, err := suggestCategoryWithAI(title, description, brand, currentCategory)
+	if err == nil && len(aiSuggestions) > 0 {
+		return aiSuggestions
+	}
+
+	// Fallback to rule-based categorization
+	return suggestCategoryWithRules(title, description, brand, currentCategory)
+}
+
+// suggestCategoryWithAI uses OpenRouter AI for category suggestions
+func suggestCategoryWithAI(title, description, brand, currentCategory string) ([]map[string]interface{}, error) {
+	prompt := fmt.Sprintf(`You are an expert e-commerce product categorization specialist. Analyze this product and suggest the most appropriate categories.
+
+Product: "%s"
+Description: "%s"
+Brand: "%s"
+Current Category: "%s"
+
+Provide 3 category suggestions in this exact JSON format:
+[
+  {"category": "Category Name", "confidence": 0.95, "reason": "Brief explanation"},
+  {"category": "Alternative Category", "confidence": 0.85, "reason": "Brief explanation"},
+  {"category": "Related Category", "confidence": 0.75, "reason": "Brief explanation"}
+]
+
+Focus on:
+- E-commerce standard categories
+- Fashion/retail industry standards
+- SEO-friendly category names
+- Specific, not generic categories
+- High confidence scores for best matches
+
+Return ONLY the JSON array, no other text:`, title, description, brand, currentCategory)
+
+	aiResponse, err := callOpenRouterAI(prompt, 200, 0.6)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse AI response as JSON
+	var suggestions []map[string]interface{}
+	if err := json.Unmarshal([]byte(aiResponse), &suggestions); err != nil {
+		return nil, fmt.Errorf("failed to parse AI response: %v", err)
+	}
+
+	return suggestions, nil
+}
+
+// suggestCategoryWithRules provides rule-based fallback for category suggestions
+func suggestCategoryWithRules(title, description, brand, currentCategory string) []map[string]interface{} {
 	suggestions := []map[string]interface{}{}
 
 	// Analyze title and description for category keywords
