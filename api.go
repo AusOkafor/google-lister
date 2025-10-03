@@ -2367,7 +2367,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					}
 					whereClause = fmt.Sprintf("WHERE id IN (%s)", strings.Join(placeholders, ","))
 				} else {
-					whereClause = "WHERE status = 'ACTIVE'"
+					whereClause = "WHERE status = $1"
 					args = append(args, "ACTIVE")
 				}
 
