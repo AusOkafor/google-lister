@@ -706,6 +706,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Store products in database
 				syncedCount := 0
+				var errors []string
+				
 				for _, product := range products {
 					// Extract first variant price and SKU
 					var price float64
@@ -717,17 +719,17 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						}
 						sku = product.Variants[0].SKU
 					}
-
+					
 					// Extract image URLs
 					var imageURLs []string
 					for _, img := range product.Images {
 						imageURLs = append(imageURLs, img.URL)
 					}
-
+					
 					// Convert variants to JSON
 					variantsJSON, _ := json.Marshal(product.Variants)
 					metafieldsJSON, _ := json.Marshal(product.Metafields)
-
+					
 					_, err := db.Exec(`
 						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status)
 						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
@@ -736,10 +738,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							description = EXCLUDED.description,
 							price = EXCLUDED.price,
 							updated_at = NOW()
-					`, connectorID, fmt.Sprintf("%d", product.ID), product.Title, product.Description, price, "USD", sku, product.Vendor, product.ProductType,
-						imageURLs, string(variantsJSON), string(metafieldsJSON), "ACTIVE")
-
-					if err == nil {
+					`, connectorID, fmt.Sprintf("%d", product.ID), product.Title, product.Description, price, "USD", sku, product.Vendor, product.ProductType, 
+					   imageURLs, string(variantsJSON), string(metafieldsJSON), "ACTIVE")
+					
+					if err != nil {
+						errors = append(errors, fmt.Sprintf("Product %s: %v", product.Title, err))
+					} else {
 						syncedCount++
 					}
 				}
@@ -747,12 +751,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Update connector last_sync
 				db.Exec("UPDATE connectors SET last_sync = NOW() WHERE id = $1", connectorID)
 
-				c.JSON(http.StatusOK, gin.H{
+				response := gin.H{
 					"message":         "Product sync completed",
 					"connector_id":    connectorID,
 					"products_synced": syncedCount,
 					"total_products":  len(products),
-				})
+				}
+				
+				if len(errors) > 0 {
+					response["errors"] = errors
+					response["message"] = fmt.Sprintf("Product sync completed with %d errors", len(errors))
+				}
+				
+				c.JSON(http.StatusOK, response)
 			})
 		}
 	}
