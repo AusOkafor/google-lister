@@ -503,42 +503,51 @@ func optimizeProductTitle(title, description, brand, category, keywords string, 
 
 // optimizeTitleWithAI uses OpenRouter AI for title optimization
 func optimizeTitleWithAI(title, description, brand, category, keywords string, maxLength int) (string, error) {
-	prompt := fmt.Sprintf(`You are an expert e-commerce SEO specialist. Create a compelling, descriptive product title that will rank well in search engines and convert browsers into buyers.
+	prompt := fmt.Sprintf(`You are a professional e-commerce SEO expert. Transform this product title into a compelling, searchable title that drives clicks and sales.
 
-PRODUCT DETAILS:
+CURRENT PRODUCT:
 - Original Title: "%s"
-- Description: "%s"
+- Product Description: "%s"
 - Brand: "%s"
 - Category: "%s"
-- Target Keywords: "%s"
-- Max Length: %d characters
+- Keywords to include: "%s"
 
-OPTIMIZATION RULES:
-1. Make it DESCRIPTIVE - tell customers exactly what the product is
-2. Include the BRAND name naturally
-3. Add RELEVANT keywords that customers search for
-4. Keep it UNDER %d characters for SEO
-5. Use proper TITLE CASE
-6. Make it COMPELLING and ACTIONABLE
-7. Focus on BENEFITS, not just features
+TASK: Create a new title that is:
+1. MORE DESCRIPTIVE than the original
+2. Includes the brand name naturally
+3. Contains relevant keywords customers search for
+4. Under %d characters
+5. Compelling and click-worthy
 
-EXAMPLES OF GOOD TITLES:
-- "Premium Leather Crossbody Bag - Stylish Women's Handbag with Adjustable Strap"
-- "Sterling Silver Pendant Necklace - Elegant Jewelry for Women"
+EXAMPLES OF GOOD TRANSFORMATIONS:
+Original: "Summer Necklace"
+Better: "Gold Boho Necklace with Turquoise Pendant - Elegant Summer Jewelry"
 
-Create a title that makes customers want to click and buy. Return ONLY the optimized title:`, title, description, brand, category, keywords, maxLength, maxLength)
+Original: "Leather Bag"
+Better: "Premium Leather Crossbody Bag - Stylish Women's Handbag"
+
+Original: "Blue Shirt"
+Better: "Men's Cotton Oxford Blue Dress Shirt - Business Casual"
+
+Based on the description "%s", create a title that describes what the product actually is and why customers should buy it. Return ONLY the optimized title:`, title, description, brand, category, keywords, maxLength, description)
+
+	fmt.Printf("🤖 AI Input - Title: '%s', Description: '%s', Brand: '%s'\n", title, description, brand)
 
 	aiTitle, err := callOpenRouterAI(prompt, 50, 0.7)
 	if err != nil {
+		fmt.Printf("❌ AI Error: %v\n", err)
 		return "", err
 	}
 
 	// Clean and validate AI response
 	aiTitle = strings.TrimSpace(aiTitle)
+	fmt.Printf("🤖 AI Raw Response: '%s'\n", aiTitle)
+
 	if len(aiTitle) > maxLength {
 		aiTitle = aiTitle[:maxLength-3] + "..."
 	}
 
+	fmt.Printf("✅ AI Final Title: '%s'\n", aiTitle)
 	return aiTitle, nil
 }
 
