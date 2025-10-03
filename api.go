@@ -46,6 +46,105 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 
+	// App Proxy routes (for Custom Apps)
+	proxy := router.Group("/api/v1/shopify/proxy")
+	{
+		// App Proxy Install
+		proxy.GET("/install", func(c *gin.Context) {
+			// Get shop domain from query params
+			shop := c.Query("shop")
+			if shop == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Missing shop parameter"})
+				return
+			}
+
+			// Get Shopify credentials from environment
+			clientID := os.Getenv("SHOPIFY_CLIENT_ID")
+			if clientID == "" {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Shopify client ID not configured"})
+				return
+			}
+
+			// Generate OAuth URL for App Proxy
+			scopes := "read_products,write_products,read_inventory,write_inventory,read_shop"
+			state := fmt.Sprintf("%d", time.Now().Unix())
+
+			// Clean the shop domain
+			cleanDomain := shop
+			if strings.HasSuffix(shop, ".myshopify.com") {
+				cleanDomain = strings.TrimSuffix(shop, ".myshopify.com")
+			}
+
+			// App Proxy callback URL
+			redirectURI := fmt.Sprintf("https://%s/apps/lister/api/callback", shop)
+
+			authURL := fmt.Sprintf(
+				"https://%s.myshopify.com/admin/oauth/authorize?client_id=%s&scope=%s&redirect_uri=%s&state=%s",
+				cleanDomain,
+				clientID,
+				scopes,
+				redirectURI,
+				state,
+			)
+
+			// Return HTML page with redirect
+			c.Header("Content-Type", "text/html")
+			c.String(200, `
+				<!DOCTYPE html>
+				<html>
+				<head>
+					<title>Installing Lister App</title>
+				</head>
+				<body>
+					<h2>Installing Lister App...</h2>
+					<p>Redirecting to Shopify for authentication...</p>
+					<script>
+						window.location.href = "%s";
+					</script>
+					<p><a href="%s">Click here if not redirected automatically</a></p>
+				</body>
+				</html>
+			`, authURL, authURL)
+		})
+
+		// App Proxy Callback
+		proxy.GET("/callback", func(c *gin.Context) {
+			code := c.Query("code")
+			state := c.Query("state")
+			shop := c.Query("shop")
+
+			if code == "" || state == "" || shop == "" {
+				c.Header("Content-Type", "text/html")
+				c.String(400, `
+					<!DOCTYPE html>
+					<html>
+					<head><title>Error</title></head>
+					<body>
+						<h2>Installation Error</h2>
+						<p>Missing required parameters. Please try again.</p>
+					</body>
+					</html>
+				`)
+				return
+			}
+
+			// Success page
+			c.Header("Content-Type", "text/html")
+			c.String(200, `
+				<!DOCTYPE html>
+				<html>
+				<head><title>Installation Successful</title></head>
+				<body>
+					<h2>✅ Lister App Installed Successfully!</h2>
+					<p><strong>Shop:</strong> %s</p>
+					<p><strong>Status:</strong> Connected</p>
+					<p>You can now close this window and return to your Shopify admin.</p>
+				</body>
+				</html>
+			`, shop)
+		})
+	}
+
 	// API routes
 	api := router.Group("/api/v1")
 	{
