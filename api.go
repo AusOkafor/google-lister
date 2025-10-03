@@ -503,24 +503,30 @@ func optimizeProductTitle(title, description, brand, category, keywords string, 
 
 // optimizeTitleWithAI uses OpenRouter AI for title optimization
 func optimizeTitleWithAI(title, description, brand, category, keywords string, maxLength int) (string, error) {
-	prompt := fmt.Sprintf(`You are an expert e-commerce SEO specialist. Optimize this product title for maximum search visibility and conversion.
+	prompt := fmt.Sprintf(`You are an expert e-commerce SEO specialist. Create a compelling, descriptive product title that will rank well in search engines and convert browsers into buyers.
 
-Original Title: "%s"
-Description: "%s"
-Brand: "%s"
-Category: "%s"
-Keywords: "%s"
-Max Length: %d characters
+PRODUCT DETAILS:
+- Original Title: "%s"
+- Description: "%s"
+- Brand: "%s"
+- Category: "%s"
+- Target Keywords: "%s"
+- Max Length: %d characters
 
-Requirements:
-- Include brand name if not present
-- Add relevant keywords naturally
-- Keep under %d characters
-- Make it compelling and SEO-friendly
-- Use title case
-- Avoid excessive punctuation
+OPTIMIZATION RULES:
+1. Make it DESCRIPTIVE - tell customers exactly what the product is
+2. Include the BRAND name naturally
+3. Add RELEVANT keywords that customers search for
+4. Keep it UNDER %d characters for SEO
+5. Use proper TITLE CASE
+6. Make it COMPELLING and ACTIONABLE
+7. Focus on BENEFITS, not just features
 
-Return ONLY the optimized title, no explanations:`, title, description, brand, category, keywords, maxLength, maxLength)
+EXAMPLES OF GOOD TITLES:
+- "Premium Leather Crossbody Bag - Stylish Women's Handbag with Adjustable Strap"
+- "Sterling Silver Pendant Necklace - Elegant Jewelry for Women"
+
+Create a title that makes customers want to click and buy. Return ONLY the optimized title:`, title, description, brand, category, keywords, maxLength, maxLength)
 
 	aiTitle, err := callOpenRouterAI(prompt, 50, 0.7)
 	if err != nil {
@@ -598,26 +604,34 @@ func enhanceProductDescription(title, description, brand, category string, price
 
 // enhanceDescriptionWithAI uses OpenRouter AI for description enhancement
 func enhanceDescriptionWithAI(title, description, brand, category string, price float64, style, length string) (string, error) {
-	prompt := fmt.Sprintf(`You are an expert e-commerce copywriter. Create a compelling product description that converts browsers into buyers.
+	prompt := fmt.Sprintf(`You are an expert e-commerce copywriter who specializes in creating compelling product descriptions that drive sales and conversions.
 
-Product: "%s"
-Original Description: "%s"
-Brand: "%s"
-Category: "%s"
-Price: $%.2f
-Style: %s
-Length: %s
+PRODUCT INFORMATION:
+- Product Name: "%s"
+- Original Description: "%s"
+- Brand: "%s"
+- Category: "%s"
+- Price: $%.2f
+- Style: %s
+- Length: %s
 
-Requirements:
-- Write in %s style (marketing/technical/casual)
-- Make it %s length (short/medium/long)
-- Include emotional triggers and benefits
-- Add compelling call-to-action
-- Use emojis appropriately
-- Focus on customer benefits, not just features
-- Make it scannable and engaging
+COPYWRITING REQUIREMENTS:
+1. Write in %s style (marketing/technical/casual)
+2. Make it %s length (short/medium/long)
+3. Focus on CUSTOMER BENEFITS, not just features
+4. Use EMOTIONAL TRIGGERS and POWER WORDS
+5. Include a COMPELLING CALL-TO-ACTION
+6. Make it SCANNABLE with bullet points or short paragraphs
+7. Add RELEVANT EMOJIS to increase engagement
+8. Address CUSTOMER PAIN POINTS and solutions
+9. Create URGENCY and DESIRE to buy
 
-Return ONLY the enhanced description, no explanations:`, title, description, brand, category, price, style, length, style, length)
+STYLE GUIDELINES:
+- Marketing: Focus on benefits, emotional appeal, social proof
+- Technical: Detailed specifications, features, performance
+- Casual: Friendly, conversational, approachable
+
+Create a description that makes customers excited to buy this product. Return ONLY the enhanced description:`, title, description, brand, category, price, style, length, style, length)
 
 	aiDescription, err := callOpenRouterAI(prompt, 300, 0.8)
 	if err != nil {
