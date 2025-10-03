@@ -243,8 +243,8 @@ func fetchShopifyProducts(shopDomain, accessToken string) ([]ShopifyProduct, err
 	// Create HTTP client
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	// Build API URL with proper format
-	apiURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=10", cleanDomain)
+	// Build API URL with proper format (fetch all products)
+	apiURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", cleanDomain)
 
 	// Create request
 	req, err := http.NewRequest("GET", apiURL, nil)
@@ -707,7 +707,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Store products in database
 				syncedCount := 0
 				var errors []string
-				
+
 				for _, product := range products {
 					// Extract first variant price and SKU
 					var price float64
@@ -719,8 +719,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						}
 						sku = product.Variants[0].SKU
 					}
-					
-					// Extract image URLs
+
+					// Extract image URLs and convert to PostgreSQL array format
 					var imageURLs []string
 					for _, img := range product.Images {
 						imageURLs = append(imageURLs, img.URL)
@@ -729,6 +729,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					// Convert variants to JSON
 					variantsJSON, _ := json.Marshal(product.Variants)
 					metafieldsJSON, _ := json.Marshal(product.Metafields)
+					
+					// Convert Go slice to PostgreSQL array format
+					imageURLsArray := "{" + strings.Join(imageURLs, ",") + "}"
 					
 					_, err := db.Exec(`
 						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status)
@@ -739,8 +742,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							price = EXCLUDED.price,
 							updated_at = NOW()
 					`, connectorID, fmt.Sprintf("%d", product.ID), product.Title, product.Description, price, "USD", sku, product.Vendor, product.ProductType, 
-					   imageURLs, string(variantsJSON), string(metafieldsJSON), "ACTIVE")
-					
+					   imageURLsArray, string(variantsJSON), string(metafieldsJSON), "ACTIVE")
+
 					if err != nil {
 						errors = append(errors, fmt.Sprintf("Product %s: %v", product.Title, err))
 					} else {
@@ -757,12 +760,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					"products_synced": syncedCount,
 					"total_products":  len(products),
 				}
-				
+
 				if len(errors) > 0 {
 					response["errors"] = errors
 					response["message"] = fmt.Sprintf("Product sync completed with %d errors", len(errors))
 				}
-				
+
 				c.JSON(http.StatusOK, response)
 			})
 		}
