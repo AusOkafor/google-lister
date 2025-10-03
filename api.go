@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	_ "github.com/lib/pq"
 )
 
 // In-memory storage for connectors (for demo purposes)
@@ -25,13 +27,60 @@ type Connector struct {
 }
 
 var (
-	connectors       []Connector
-	connectorMutex   sync.RWMutex
-	connectorCounter int
+	db      *sql.DB
+	dbMutex sync.Mutex
 )
+
+// initDB initializes the database connection
+func initDB() error {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	if db != nil {
+		return nil // Already initialized
+	}
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		return fmt.Errorf("DATABASE_URL not set")
+	}
+
+	var err error
+	db, err = sql.Open("postgres", databaseURL)
+	if err != nil {
+		return err
+	}
+
+	// Test the connection
+	if err = db.Ping(); err != nil {
+		return err
+	}
+
+	// Create connectors table if it doesn't exist
+	createTableSQL := `
+	CREATE TABLE IF NOT EXISTS connectors (
+		id VARCHAR(255) PRIMARY KEY,
+		name VARCHAR(255) NOT NULL,
+		type VARCHAR(50) NOT NULL,
+		status VARCHAR(50) NOT NULL,
+		shop_domain VARCHAR(255) NOT NULL,
+		access_token TEXT NOT NULL,
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+		last_sync TIMESTAMP WITH TIME ZONE
+	);`
+
+	_, err = db.Exec(createTableSQL)
+	return err
+}
 
 // Handler is the main entry point for Vercel
 func Handler(w http.ResponseWriter, r *http.Request) {
+	// Initialize database connection
+	if err := initDB(); err != nil {
+		http.Error(w, fmt.Sprintf("Database initialization failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	// Set Gin to release mode for production
 	gin.SetMode(gin.ReleaseMode)
 
@@ -169,21 +218,32 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// For demo purposes, create a mock access token
 			// In production, you would exchange the code for a real access token
 			mockAccessToken := fmt.Sprintf("mock_token_%d", time.Now().Unix())
+			connectorID := fmt.Sprintf("connector_%d", time.Now().Unix())
 
-			// Create and save connector
-			connectorMutex.Lock()
-			connectorCounter++
-			connector := Connector{
-				ID:          fmt.Sprintf("connector_%d", connectorCounter),
-				Name:        fmt.Sprintf("Shopify Store - %s", shop),
-				Type:        "SHOPIFY",
-				Status:      "ACTIVE",
-				ShopDomain:  shop,
-				AccessToken: mockAccessToken,
-				CreatedAt:   time.Now(),
+			// Save connector to database
+			_, err := db.Exec(`
+				INSERT INTO connectors (id, name, type, status, shop_domain, access_token, created_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7)
+				ON CONFLICT (id) DO UPDATE SET
+					name = EXCLUDED.name,
+					status = EXCLUDED.status,
+					access_token = EXCLUDED.access_token
+			`, connectorID, fmt.Sprintf("Shopify Store - %s", shop), "SHOPIFY", "ACTIVE", shop, mockAccessToken, time.Now())
+
+			if err != nil {
+				c.Header("Content-Type", "text/html")
+				c.String(500, `
+					<!DOCTYPE html>
+					<html>
+					<head><title>Database Error</title></head>
+					<body>
+						<h2>❌ Installation Failed</h2>
+						<p>Failed to save connector to database.</p>
+					</body>
+					</html>
+				`)
+				return
 			}
-			connectors = append(connectors, connector)
-			connectorMutex.Unlock()
 
 			// Success page
 			c.Header("Content-Type", "text/html")
@@ -200,7 +260,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					<p><a href="/api/v1/connectors">View Connectors</a></p>
 				</body>
 				</html>
-			`, shop, connector.ID)
+			`, shop, connectorID)
 		})
 	}
 
@@ -217,25 +277,39 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 		// Connectors
 		api.GET("/connectors", func(c *gin.Context) {
-			connectorMutex.RLock()
-			defer connectorMutex.RUnlock()
+			// Query connectors from database
+			rows, err := db.Query("SELECT id, name, type, status, shop_domain, created_at, last_sync FROM connectors ORDER BY created_at DESC")
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query connectors"})
+				return
+			}
+			defer rows.Close()
 
-			// Return connectors without sensitive data
-			var safeConnectors []map[string]interface{}
-			for _, conn := range connectors {
-				safeConnectors = append(safeConnectors, map[string]interface{}{
-					"id":          conn.ID,
-					"name":        conn.Name,
-					"type":        conn.Type,
-					"status":      conn.Status,
-					"shop_domain": conn.ShopDomain,
-					"created_at":  conn.CreatedAt,
-					"last_sync":   conn.LastSync,
+			var connectors []map[string]interface{}
+			for rows.Next() {
+				var id, name, connectorType, status, shopDomain string
+				var createdAt time.Time
+				var lastSync *time.Time
+
+				err := rows.Scan(&id, &name, &connectorType, &status, &shopDomain, &createdAt, &lastSync)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan connector"})
+					return
+				}
+
+				connectors = append(connectors, map[string]interface{}{
+					"id":          id,
+					"name":        name,
+					"type":        connectorType,
+					"status":      status,
+					"shop_domain": shopDomain,
+					"created_at":  createdAt,
+					"last_sync":   lastSync,
 				})
 			}
 
 			c.JSON(200, gin.H{
-				"data":    safeConnectors,
+				"data":    connectors,
 				"message": "Connectors retrieved successfully",
 			})
 		})
@@ -311,28 +385,29 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// For demo purposes, create a mock access token
 				// In production, you would exchange the code for a real access token
 				mockAccessToken := fmt.Sprintf("mock_token_%d", time.Now().Unix())
+				connectorID := fmt.Sprintf("connector_%d", time.Now().Unix())
 
-				// Create and save connector
-				connectorMutex.Lock()
-				connectorCounter++
-				connector := Connector{
-					ID:          fmt.Sprintf("connector_%d", connectorCounter),
-					Name:        fmt.Sprintf("Shopify Store - %s", shop),
-					Type:        "SHOPIFY",
-					Status:      "ACTIVE",
-					ShopDomain:  shop,
-					AccessToken: mockAccessToken,
-					CreatedAt:   time.Now(),
+				// Save connector to database
+				_, err := db.Exec(`
+					INSERT INTO connectors (id, name, type, status, shop_domain, access_token, created_at)
+					VALUES ($1, $2, $3, $4, $5, $6, $7)
+					ON CONFLICT (id) DO UPDATE SET
+						name = EXCLUDED.name,
+						status = EXCLUDED.status,
+						access_token = EXCLUDED.access_token
+				`, connectorID, fmt.Sprintf("Shopify Store - %s", shop), "SHOPIFY", "ACTIVE", shop, mockAccessToken, time.Now())
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save connector to database"})
+					return
 				}
-				connectors = append(connectors, connector)
-				connectorMutex.Unlock()
 
 				// Return success with connector info
 				c.JSON(http.StatusOK, gin.H{
 					"message":      "Shopify store connected successfully",
 					"shop":         shop,
 					"state":        state,
-					"connector_id": connector.ID,
+					"connector_id": connectorID,
 					"note":         "Token exchange implementation needed",
 				})
 			})
