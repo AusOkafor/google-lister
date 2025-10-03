@@ -384,7 +384,7 @@ func generateInstagramCSV(products []map[string]interface{}) string {
 // OpenRouter AI Configuration
 const (
 	OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
-	OPENROUTER_MODEL    = "meta-llama/llama-3.1-8b-instruct:free" // Free model for cost efficiency
+	OPENROUTER_MODEL    = "microsoft/phi-3-mini-4k-instruct" // Working model
 )
 
 // OpenRouterRequest represents the request structure for OpenRouter API
@@ -417,7 +417,7 @@ func callOpenRouterAI(prompt string, maxTokens int, temperature float64) (string
 	if apiKey == "" {
 		return "", fmt.Errorf("OPENROUTER_API_KEY not configured")
 	}
-	
+
 	// Log the API call for debugging
 	fmt.Printf("🤖 AI API Call: %s\n", prompt[:min(50, len(prompt))])
 
@@ -2014,23 +2014,23 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			ai.GET("/test", func(c *gin.Context) {
 				// Test OpenRouter AI connection
 				testPrompt := "Say 'AI is working' if you can read this message."
-				
+
 				aiResponse, err := callOpenRouterAI(testPrompt, 20, 0.5)
 				if err != nil {
 					c.JSON(http.StatusOK, gin.H{
-						"ai_status": "FAILED",
-						"error": err.Error(),
+						"ai_status":     "FAILED",
+						"error":         err.Error(),
 						"fallback_used": true,
-						"message": "AI is not working, using fallback system",
+						"message":       "AI is not working, using fallback system",
 					})
 					return
 				}
-				
+
 				c.JSON(http.StatusOK, gin.H{
-					"ai_status": "WORKING",
-					"ai_response": aiResponse,
+					"ai_status":     "WORKING",
+					"ai_response":   aiResponse,
 					"fallback_used": false,
-					"message": "AI is working correctly",
+					"message":       "AI is working correctly",
 				})
 			})
 
