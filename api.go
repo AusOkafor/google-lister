@@ -178,6 +178,20 @@ func initDB() error {
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 		);`,
+		`CREATE TABLE IF NOT EXISTS inventory_levels (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			product_id UUID REFERENCES products(id),
+			connector_id VARCHAR(255) REFERENCES connectors(id),
+			inventory_item_id VARCHAR(255) NOT NULL,
+			location_id VARCHAR(255) NOT NULL,
+			available_quantity INTEGER DEFAULT 0,
+			committed_quantity INTEGER DEFAULT 0,
+			incoming_quantity INTEGER DEFAULT 0,
+			on_hand_quantity INTEGER DEFAULT 0,
+			last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			UNIQUE(connector_id, inventory_item_id, location_id)
+		);`,
 	}
 
 	// Execute all table creation statements
@@ -846,7 +860,9 @@ func optimizeProductImages(title, description, brand, category string, images []
 			"priority":       "high",
 			"message":        "Add product images to improve conversion rates",
 			"recommendation": "Upload at least 3-5 high-quality product images",
+			"impact":         "High - Images are crucial for online sales",
 		})
+		return suggestions
 	}
 
 	// Check for low image count
@@ -856,29 +872,92 @@ func optimizeProductImages(title, description, brand, category string, images []
 			"priority":       "medium",
 			"message":        fmt.Sprintf("Only %d images found, recommend 3-5 images", len(images)),
 			"recommendation": "Add more product images from different angles",
+			"impact":         "Medium - More images increase customer confidence",
 		})
 	}
 
-	// Check image quality (basic checks)
+	// Check for excessive images
+	if len(images) > 8 {
+		suggestions = append(suggestions, map[string]interface{}{
+			"type":           "too_many_images",
+			"priority":       "low",
+			"message":        fmt.Sprintf("Many images (%d) may slow page loading", len(images)),
+			"recommendation": "Consider reducing to 5-8 high-quality images",
+			"impact":         "Low - Performance optimization",
+		})
+	}
+
+	// Check image quality and format
 	for i, imageURL := range images {
+		// Check for placeholder images
 		if strings.Contains(imageURL, "placeholder") || strings.Contains(imageURL, "default") {
 			suggestions = append(suggestions, map[string]interface{}{
 				"type":           "low_quality_image",
 				"priority":       "high",
 				"message":        fmt.Sprintf("Image %d appears to be a placeholder", i+1),
 				"recommendation": "Replace with high-quality product photos",
+				"impact":         "High - Placeholder images reduce trust",
+				"image_url":      imageURL,
+			})
+		}
+
+		// Check image dimensions from URL
+		if strings.Contains(imageURL, "_925x") {
+			// Good standard size
+		} else if strings.Contains(imageURL, "_1024x") || strings.Contains(imageURL, "_2048x") {
+			suggestions = append(suggestions, map[string]interface{}{
+				"type":           "high_resolution_image",
+				"priority":       "low",
+				"message":        fmt.Sprintf("Image %d has excellent resolution", i+1),
+				"recommendation": "Great! High resolution images build trust",
+				"impact":         "Positive - High quality image",
+				"image_url":      imageURL,
 			})
 		}
 	}
 
 	// Suggest image types based on product category
-	text := strings.ToLower(title + " " + description)
-	if strings.Contains(text, "clothing") || strings.Contains(text, "shirt") || strings.Contains(text, "dress") {
+	text := strings.ToLower(title + " " + description + " " + category)
+	
+	if strings.Contains(text, "clothing") || strings.Contains(text, "shirt") || strings.Contains(text, "dress") || strings.Contains(text, "jacket") {
 		suggestions = append(suggestions, map[string]interface{}{
-			"type":           "image_variety",
+			"type":           "image_variety_fashion",
 			"priority":       "medium",
 			"message":        "Fashion items benefit from multiple angles",
-			"recommendation": "Add front, back, side, and detail shots",
+			"recommendation": "Add front, back, side, and detail shots. Include model photos if possible.",
+			"impact":         "Medium - Multiple angles help customers visualize the product",
+		})
+	}
+
+	if strings.Contains(text, "jewelry") || strings.Contains(text, "necklace") || strings.Contains(text, "ring") || strings.Contains(text, "watch") {
+		suggestions = append(suggestions, map[string]interface{}{
+			"type":           "image_variety_jewelry",
+			"priority":       "medium",
+			"message":        "Jewelry needs detailed close-ups",
+			"recommendation": "Add macro shots showing details, craftsmanship, and materials",
+			"impact":         "Medium - Detail shots build trust in quality",
+		})
+	}
+
+	// Check for consistent image style
+	if len(images) > 1 {
+		suggestions = append(suggestions, map[string]interface{}{
+			"type":           "image_consistency",
+			"priority":       "low",
+			"message":        "Ensure consistent lighting and background across images",
+			"recommendation": "Use similar lighting, background, and styling for all product photos",
+			"impact":         "Low - Consistency improves professional appearance",
+		})
+	}
+
+	// If no specific suggestions, provide general ones
+	if len(suggestions) == 0 {
+		suggestions = append(suggestions, map[string]interface{}{
+			"type":           "image_optimization_general",
+			"priority":       "low",
+			"message":        "Images look good! Consider these optimizations:",
+			"recommendation": "A/B test different image orders, add lifestyle shots, or consider video",
+			"impact":         "Low - Further optimization opportunities",
 		})
 	}
 
@@ -1516,35 +1595,63 @@ func processInventoryUpdate(inventoryData struct {
 		"details":   map[string]interface{}{},
 	}
 
-	// Find product variant by inventory item ID
-	var variantID string
-	var productID string
+	// Get connector ID
+	var connectorID string
 	err := db.QueryRow(`
-		SELECT p.id, pv.id FROM products p
-		JOIN connectors c ON p.connector_id = c.id
-		WHERE c.shop_domain = $1 AND pv.external_id = $2
-	`, shopDomain, fmt.Sprintf("%d", inventoryData.InventoryItemID)).Scan(&productID, &variantID)
+		SELECT id FROM connectors WHERE shop_domain = $1 AND status = 'ACTIVE'
+	`, shopDomain).Scan(&connectorID)
 
 	if err != nil {
-		result["status"] = "warning"
-		result["message"] = "Product variant not found, but inventory update logged"
-		result["details"] = map[string]interface{}{
-			"inventory_item_id": inventoryData.InventoryItemID,
-			"available":         inventoryData.Available,
-			"location_id":       inventoryData.LocationID,
-		}
+		result["status"] = "error"
+		result["message"] = "Connector not found"
 		return result
 	}
 
-	// Update inventory in product metadata or variants table
-	// For now, we'll log the update
-	result["message"] = "Inventory update processed successfully"
+	// Try to find the product by inventory item ID in variants JSON
+	var productID string
+	err = db.QueryRow(`
+		SELECT id FROM products 
+		WHERE connector_id = $1 AND variants::text LIKE $2
+	`, connectorID, fmt.Sprintf("%%\"id\": %d%%", inventoryData.InventoryItemID)).Scan(&productID)
+
+	// If not found, create a generic inventory record
+	if err != nil {
+		productID = "unknown"
+		result["status"] = "warning"
+		result["message"] = "Product not found, but inventory tracked"
+	}
+
+	// Store inventory level in database
+	_, err = db.Exec(`
+		INSERT INTO inventory_levels (
+			product_id, connector_id, inventory_item_id, location_id, 
+			available_quantity, last_updated, created_at
+		) VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		ON CONFLICT (connector_id, inventory_item_id, location_id) 
+		DO UPDATE SET 
+			available_quantity = EXCLUDED.available_quantity,
+			last_updated = EXCLUDED.last_updated
+	`, productID, connectorID, fmt.Sprintf("%d", inventoryData.InventoryItemID), 
+	   fmt.Sprintf("%d", inventoryData.LocationID), inventoryData.Available)
+
+	if err != nil {
+		result["status"] = "error"
+		result["message"] = fmt.Sprintf("Failed to store inventory: %v", err)
+		return result
+	}
+
+	if result["status"] != "warning" {
+		result["status"] = "success"
+		result["message"] = "Inventory update processed and stored successfully"
+	}
+
 	result["details"] = map[string]interface{}{
-		"product_id":        productID,
-		"variant_id":        variantID,
+		"product_id": productID,
+		"connector_id": connectorID,
 		"inventory_item_id": inventoryData.InventoryItemID,
-		"available":         inventoryData.Available,
-		"location_id":       inventoryData.LocationID,
+		"available": inventoryData.Available,
+		"location_id": inventoryData.LocationID,
+		"stored_in_database": true,
 	}
 
 	return result
@@ -1599,32 +1706,32 @@ func processAppUninstall(shopDomain, topic string) map[string]interface{} {
 // setupAutomaticWebhooks automatically registers all required webhooks during app installation
 func setupAutomaticWebhooks(shopDomain, accessToken string) map[string]map[string]interface{} {
 	results := make(map[string]map[string]interface{})
-	
+
 	// Clean shop domain
 	cleanDomain := shopDomain
 	if strings.HasSuffix(shopDomain, ".myshopify.com") {
 		cleanDomain = strings.TrimSuffix(shopDomain, ".myshopify.com")
 	}
-	
+
 	// Define all required webhooks
 	webhooks := map[string]string{
-		"products/create":           "/webhooks/shopify/products/create",
-		"products/update":           "/webhooks/shopify/products/update",
-		"products/delete":           "/webhooks/shopify/products/delete",
-		"inventory_levels/update":   "/webhooks/shopify/inventory_levels/update",
-		"app/uninstalled":           "/webhooks/shopify/app/uninstalled",
+		"products/create":         "/webhooks/shopify/products/create",
+		"products/update":         "/webhooks/shopify/products/update",
+		"products/delete":         "/webhooks/shopify/products/delete",
+		"inventory_levels/update": "/webhooks/shopify/inventory_levels/update",
+		"app/uninstalled":         "/webhooks/shopify/app/uninstalled",
 	}
-	
+
 	// Get the base URL for webhooks
 	baseURL := "https://product-lister-eight.vercel.app"
-	
+
 	for topic, endpoint := range webhooks {
 		result := map[string]interface{}{
-			"success": false,
-			"message": "",
+			"success":    false,
+			"message":    "",
 			"webhook_id": "",
 		}
-		
+
 		// Create webhook payload
 		webhookData := map[string]interface{}{
 			"webhook": map[string]interface{}{
@@ -1633,7 +1740,7 @@ func setupAutomaticWebhooks(shopDomain, accessToken string) map[string]map[strin
 				"format":  "json",
 			},
 		}
-		
+
 		// Convert to JSON
 		jsonData, err := json.Marshal(webhookData)
 		if err != nil {
@@ -1641,7 +1748,7 @@ func setupAutomaticWebhooks(shopDomain, accessToken string) map[string]map[strin
 			results[topic] = result
 			continue
 		}
-		
+
 		// Create HTTP request
 		url := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/webhooks.json", cleanDomain)
 		req, err := http.NewRequest("POST", url, strings.NewReader(string(jsonData)))
@@ -1650,12 +1757,12 @@ func setupAutomaticWebhooks(shopDomain, accessToken string) map[string]map[strin
 			results[topic] = result
 			continue
 		}
-		
+
 		// Set headers
 		req.Header.Set("X-Shopify-Access-Token", accessToken)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json")
-		
+
 		// Make request
 		client := &http.Client{Timeout: 30 * time.Second}
 		resp, err := client.Do(req)
@@ -1665,7 +1772,7 @@ func setupAutomaticWebhooks(shopDomain, accessToken string) map[string]map[strin
 			continue
 		}
 		defer resp.Body.Close()
-		
+
 		// Read response
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -1673,7 +1780,7 @@ func setupAutomaticWebhooks(shopDomain, accessToken string) map[string]map[strin
 			results[topic] = result
 			continue
 		}
-		
+
 		// Check response status
 		if resp.StatusCode == 201 || resp.StatusCode == 200 {
 			// Parse response to get webhook ID
@@ -1682,11 +1789,11 @@ func setupAutomaticWebhooks(shopDomain, accessToken string) map[string]map[strin
 					ID int64 `json:"id"`
 				} `json:"webhook"`
 			}
-			
+
 			if err := json.Unmarshal(body, &webhookResponse); err == nil {
 				result["webhook_id"] = webhookResponse.Webhook.ID
 			}
-			
+
 			result["success"] = true
 			result["message"] = "Webhook created successfully"
 		} else if resp.StatusCode == 422 {
@@ -1696,27 +1803,27 @@ func setupAutomaticWebhooks(shopDomain, accessToken string) map[string]map[strin
 		} else {
 			result["message"] = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body))
 		}
-		
+
 		results[topic] = result
 	}
-	
+
 	return results
 }
 
 // getWebhookStatus retrieves current webhook status from Shopify
 func getWebhookStatus(shopDomain, accessToken string) map[string]interface{} {
 	result := map[string]interface{}{
-		"status": "unknown",
+		"status":   "unknown",
 		"webhooks": []map[string]interface{}{},
-		"error": "",
+		"error":    "",
 	}
-	
+
 	// Clean shop domain
 	cleanDomain := shopDomain
 	if strings.HasSuffix(shopDomain, ".myshopify.com") {
 		cleanDomain = strings.TrimSuffix(shopDomain, ".myshopify.com")
 	}
-	
+
 	// Create HTTP request to get webhooks
 	url := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/webhooks.json", cleanDomain)
 	req, err := http.NewRequest("GET", url, nil)
@@ -1724,11 +1831,11 @@ func getWebhookStatus(shopDomain, accessToken string) map[string]interface{} {
 		result["error"] = fmt.Sprintf("Failed to create request: %v", err)
 		return result
 	}
-	
+
 	// Set headers
 	req.Header.Set("X-Shopify-Access-Token", accessToken)
 	req.Header.Set("Accept", "application/json")
-	
+
 	// Make request
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -1737,20 +1844,20 @@ func getWebhookStatus(shopDomain, accessToken string) map[string]interface{} {
 		return result
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		result["error"] = fmt.Sprintf("Failed to read response: %v", err)
 		return result
 	}
-	
+
 	// Check response status
 	if resp.StatusCode != 200 {
 		result["error"] = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body))
 		return result
 	}
-	
+
 	// Parse response
 	var webhookResponse struct {
 		Webhooks []struct {
@@ -1760,41 +1867,41 @@ func getWebhookStatus(shopDomain, accessToken string) map[string]interface{} {
 			Format  string `json:"format"`
 		} `json:"webhooks"`
 	}
-	
+
 	if err := json.Unmarshal(body, &webhookResponse); err != nil {
 		result["error"] = fmt.Sprintf("Failed to parse response: %v", err)
 		return result
 	}
-	
+
 	// Check for our webhooks
 	ourWebhooks := make([]map[string]interface{}, 0)
 	baseURL := "https://product-lister-eight.vercel.app"
-	
+
 	expectedTopics := []string{
 		"products/create",
-		"products/update", 
+		"products/update",
 		"products/delete",
 		"inventory_levels/update",
 		"app/uninstalled",
 	}
-	
+
 	for _, webhook := range webhookResponse.Webhooks {
 		if strings.HasPrefix(webhook.Address, baseURL) {
 			ourWebhooks = append(ourWebhooks, map[string]interface{}{
-				"id": webhook.ID,
-				"topic": webhook.Topic,
-				"address": webhook.Address,
-				"format": webhook.Format,
+				"id":         webhook.ID,
+				"topic":      webhook.Topic,
+				"address":    webhook.Address,
+				"format":     webhook.Format,
 				"configured": true,
 			})
 		}
 	}
-	
+
 	result["status"] = "configured"
 	result["webhooks"] = ourWebhooks
 	result["total_configured"] = len(ourWebhooks)
 	result["expected_total"] = len(expectedTopics)
-	
+
 	return result
 }
 
@@ -2269,79 +2376,79 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-			// Webhook Management - Check webhook status for a shop
-			webhooks.GET("/status/:shop", func(c *gin.Context) {
-				shopDomain := c.Param("shop")
-				
-				// Get access token for the shop
-				var accessToken string
-				err := db.QueryRow(`
+		// Webhook Management - Check webhook status for a shop
+		webhooks.GET("/status/:shop", func(c *gin.Context) {
+			shopDomain := c.Param("shop")
+
+			// Get access token for the shop
+			var accessToken string
+			err := db.QueryRow(`
 					SELECT access_token FROM connectors 
 					WHERE shop_domain = $1 AND status = 'ACTIVE'
 				`, shopDomain).Scan(&accessToken)
-				
-				if err != nil {
-					c.JSON(http.StatusNotFound, gin.H{
-						"error": "Shop not found or not connected",
-						"shop": shopDomain,
-					})
-					return
-				}
-				
-				// Get webhook status from Shopify
-				webhookStatus := getWebhookStatus(shopDomain, accessToken)
-				
-				c.JSON(http.StatusOK, gin.H{
-					"shop": shopDomain,
-					"webhooks": webhookStatus,
-					"message": "Webhook status retrieved successfully",
+
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{
+					"error": "Shop not found or not connected",
+					"shop":  shopDomain,
 				})
+				return
+			}
+
+			// Get webhook status from Shopify
+			webhookStatus := getWebhookStatus(shopDomain, accessToken)
+
+			c.JSON(http.StatusOK, gin.H{
+				"shop":     shopDomain,
+				"webhooks": webhookStatus,
+				"message":  "Webhook status retrieved successfully",
 			})
-			
-			// Webhook Management - Re-setup webhooks for a shop
-			webhooks.POST("/setup/:shop", func(c *gin.Context) {
-				shopDomain := c.Param("shop")
-				
-				// Get access token for the shop
-				var accessToken string
-				err := db.QueryRow(`
+		})
+
+		// Webhook Management - Re-setup webhooks for a shop
+		webhooks.POST("/setup/:shop", func(c *gin.Context) {
+			shopDomain := c.Param("shop")
+
+			// Get access token for the shop
+			var accessToken string
+			err := db.QueryRow(`
 					SELECT access_token FROM connectors 
 					WHERE shop_domain = $1 AND status = 'ACTIVE'
 				`, shopDomain).Scan(&accessToken)
-				
-				if err != nil {
-					c.JSON(http.StatusNotFound, gin.H{
-						"error": "Shop not found or not connected",
-						"shop": shopDomain,
-					})
-					return
-				}
-				
-				// Setup webhooks
-				webhookResults := setupAutomaticWebhooks(shopDomain, accessToken)
-				
-				// Count successful webhooks
-				successCount := 0
-				for _, result := range webhookResults {
-					if result["success"].(bool) {
-						successCount++
-					}
-				}
-				
-				c.JSON(http.StatusOK, gin.H{
-					"shop": shopDomain,
-					"webhooks": gin.H{
-						"setup_completed": true,
-						"successful_webhooks": successCount,
-						"total_webhooks": len(webhookResults),
-						"details": webhookResults,
-					},
-					"message": "Webhooks setup completed",
+
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{
+					"error": "Shop not found or not connected",
+					"shop":  shopDomain,
 				})
+				return
+			}
+
+			// Setup webhooks
+			webhookResults := setupAutomaticWebhooks(shopDomain, accessToken)
+
+			// Count successful webhooks
+			successCount := 0
+			for _, result := range webhookResults {
+				if result["success"].(bool) {
+					successCount++
+				}
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"shop": shopDomain,
+				"webhooks": gin.H{
+					"setup_completed":     true,
+					"successful_webhooks": successCount,
+					"total_webhooks":      len(webhookResults),
+					"details":             webhookResults,
+				},
+				"message": "Webhooks setup completed",
 			})
-			
-			// Webhook Analytics
-			webhooks.GET("/analytics", func(c *gin.Context) {
+		})
+
+		// Webhook Analytics
+		webhooks.GET("/analytics", func(c *gin.Context) {
 			var analytics struct {
 				TotalWebhooks      int     `json:"total_webhooks"`
 				ProductUpdates     int     `json:"product_updates"`
@@ -2592,6 +2699,53 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				})
 			})
 
+			// Get inventory levels for a product
+			products.GET("/:id/inventory", func(c *gin.Context) {
+				productID := c.Param("id")
+				
+				rows, err := db.Query(`
+					SELECT il.inventory_item_id, il.location_id, il.available_quantity, 
+						   il.committed_quantity, il.on_hand_quantity, il.last_updated
+					FROM inventory_levels il
+					WHERE il.product_id = $1
+					ORDER BY il.last_updated DESC
+				`, productID)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query inventory"})
+					return
+				}
+				defer rows.Close()
+				
+				var inventoryLevels []map[string]interface{}
+				for rows.Next() {
+					var inventoryItemID, locationID string
+					var availableQuantity, committedQuantity, onHandQuantity int
+					var lastUpdated time.Time
+					
+					err := rows.Scan(&inventoryItemID, &locationID, &availableQuantity, 
+									&committedQuantity, &onHandQuantity, &lastUpdated)
+					if err != nil {
+						continue
+					}
+					
+					inventoryLevels = append(inventoryLevels, map[string]interface{}{
+						"inventory_item_id": inventoryItemID,
+						"location_id": locationID,
+						"available_quantity": availableQuantity,
+						"committed_quantity": committedQuantity,
+						"on_hand_quantity": onHandQuantity,
+						"last_updated": lastUpdated,
+					})
+				}
+				
+				c.JSON(http.StatusOK, gin.H{
+					"product_id": productID,
+					"inventory_levels": inventoryLevels,
+					"total_locations": len(inventoryLevels),
+					"message": "Inventory levels retrieved successfully",
+				})
+			})
+			
 			// Get product statistics
 			products.GET("/stats", func(c *gin.Context) {
 				var stats struct {
@@ -3705,7 +3859,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// 🚀 AUTOMATIC WEBHOOK SETUP - No manual configuration needed!
 				webhookResults := setupAutomaticWebhooks(shop, accessToken)
-				
+
 				// Log webhook setup results
 				fmt.Printf("🔗 Webhook Setup Results for %s:\n", shop)
 				successCount := 0
@@ -3725,10 +3879,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					"state":        state,
 					"connector_id": connectorID,
 					"webhooks": gin.H{
-						"setup_completed": true,
+						"setup_completed":     true,
 						"successful_webhooks": successCount,
-						"total_webhooks": len(webhookResults),
-						"details": webhookResults,
+						"total_webhooks":      len(webhookResults),
+						"details":             webhookResults,
 					},
 					"note": "Real access token obtained, stored, and webhooks automatically configured",
 				})
