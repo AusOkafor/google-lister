@@ -1596,6 +1596,208 @@ func processAppUninstall(shopDomain, topic string) map[string]interface{} {
 	return result
 }
 
+// setupAutomaticWebhooks automatically registers all required webhooks during app installation
+func setupAutomaticWebhooks(shopDomain, accessToken string) map[string]map[string]interface{} {
+	results := make(map[string]map[string]interface{})
+	
+	// Clean shop domain
+	cleanDomain := shopDomain
+	if strings.HasSuffix(shopDomain, ".myshopify.com") {
+		cleanDomain = strings.TrimSuffix(shopDomain, ".myshopify.com")
+	}
+	
+	// Define all required webhooks
+	webhooks := map[string]string{
+		"products/create":           "/webhooks/shopify/products/create",
+		"products/update":           "/webhooks/shopify/products/update",
+		"products/delete":           "/webhooks/shopify/products/delete",
+		"inventory_levels/update":   "/webhooks/shopify/inventory_levels/update",
+		"app/uninstalled":           "/webhooks/shopify/app/uninstalled",
+	}
+	
+	// Get the base URL for webhooks
+	baseURL := "https://product-lister-eight.vercel.app"
+	
+	for topic, endpoint := range webhooks {
+		result := map[string]interface{}{
+			"success": false,
+			"message": "",
+			"webhook_id": "",
+		}
+		
+		// Create webhook payload
+		webhookData := map[string]interface{}{
+			"webhook": map[string]interface{}{
+				"topic":   topic,
+				"address": baseURL + endpoint,
+				"format":  "json",
+			},
+		}
+		
+		// Convert to JSON
+		jsonData, err := json.Marshal(webhookData)
+		if err != nil {
+			result["message"] = fmt.Sprintf("Failed to marshal webhook data: %v", err)
+			results[topic] = result
+			continue
+		}
+		
+		// Create HTTP request
+		url := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/webhooks.json", cleanDomain)
+		req, err := http.NewRequest("POST", url, strings.NewReader(string(jsonData)))
+		if err != nil {
+			result["message"] = fmt.Sprintf("Failed to create request: %v", err)
+			results[topic] = result
+			continue
+		}
+		
+		// Set headers
+		req.Header.Set("X-Shopify-Access-Token", accessToken)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		
+		// Make request
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			result["message"] = fmt.Sprintf("Failed to create webhook: %v", err)
+			results[topic] = result
+			continue
+		}
+		defer resp.Body.Close()
+		
+		// Read response
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			result["message"] = fmt.Sprintf("Failed to read response: %v", err)
+			results[topic] = result
+			continue
+		}
+		
+		// Check response status
+		if resp.StatusCode == 201 || resp.StatusCode == 200 {
+			// Parse response to get webhook ID
+			var webhookResponse struct {
+				Webhook struct {
+					ID int64 `json:"id"`
+				} `json:"webhook"`
+			}
+			
+			if err := json.Unmarshal(body, &webhookResponse); err == nil {
+				result["webhook_id"] = webhookResponse.Webhook.ID
+			}
+			
+			result["success"] = true
+			result["message"] = "Webhook created successfully"
+		} else if resp.StatusCode == 422 {
+			// Webhook already exists - this is OK
+			result["success"] = true
+			result["message"] = "Webhook already exists"
+		} else {
+			result["message"] = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body))
+		}
+		
+		results[topic] = result
+	}
+	
+	return results
+}
+
+// getWebhookStatus retrieves current webhook status from Shopify
+func getWebhookStatus(shopDomain, accessToken string) map[string]interface{} {
+	result := map[string]interface{}{
+		"status": "unknown",
+		"webhooks": []map[string]interface{}{},
+		"error": "",
+	}
+	
+	// Clean shop domain
+	cleanDomain := shopDomain
+	if strings.HasSuffix(shopDomain, ".myshopify.com") {
+		cleanDomain = strings.TrimSuffix(shopDomain, ".myshopify.com")
+	}
+	
+	// Create HTTP request to get webhooks
+	url := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/webhooks.json", cleanDomain)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		result["error"] = fmt.Sprintf("Failed to create request: %v", err)
+		return result
+	}
+	
+	// Set headers
+	req.Header.Set("X-Shopify-Access-Token", accessToken)
+	req.Header.Set("Accept", "application/json")
+	
+	// Make request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		result["error"] = fmt.Sprintf("Failed to get webhooks: %v", err)
+		return result
+	}
+	defer resp.Body.Close()
+	
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		result["error"] = fmt.Sprintf("Failed to read response: %v", err)
+		return result
+	}
+	
+	// Check response status
+	if resp.StatusCode != 200 {
+		result["error"] = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(body))
+		return result
+	}
+	
+	// Parse response
+	var webhookResponse struct {
+		Webhooks []struct {
+			ID      int64  `json:"id"`
+			Topic   string `json:"topic"`
+			Address string `json:"address"`
+			Format  string `json:"format"`
+		} `json:"webhooks"`
+	}
+	
+	if err := json.Unmarshal(body, &webhookResponse); err != nil {
+		result["error"] = fmt.Sprintf("Failed to parse response: %v", err)
+		return result
+	}
+	
+	// Check for our webhooks
+	ourWebhooks := make([]map[string]interface{}, 0)
+	baseURL := "https://product-lister-eight.vercel.app"
+	
+	expectedTopics := []string{
+		"products/create",
+		"products/update", 
+		"products/delete",
+		"inventory_levels/update",
+		"app/uninstalled",
+	}
+	
+	for _, webhook := range webhookResponse.Webhooks {
+		if strings.HasPrefix(webhook.Address, baseURL) {
+			ourWebhooks = append(ourWebhooks, map[string]interface{}{
+				"id": webhook.ID,
+				"topic": webhook.Topic,
+				"address": webhook.Address,
+				"format": webhook.Format,
+				"configured": true,
+			})
+		}
+	}
+	
+	result["status"] = "configured"
+	result["webhooks"] = ourWebhooks
+	result["total_configured"] = len(ourWebhooks)
+	result["expected_total"] = len(expectedTopics)
+	
+	return result
+}
+
 // transformShopifyProduct converts Shopify product to our internal format
 func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string) struct {
 	ExternalID  string
@@ -2067,8 +2269,79 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		// Webhook Analytics
-		webhooks.GET("/analytics", func(c *gin.Context) {
+			// Webhook Management - Check webhook status for a shop
+			webhooks.GET("/status/:shop", func(c *gin.Context) {
+				shopDomain := c.Param("shop")
+				
+				// Get access token for the shop
+				var accessToken string
+				err := db.QueryRow(`
+					SELECT access_token FROM connectors 
+					WHERE shop_domain = $1 AND status = 'ACTIVE'
+				`, shopDomain).Scan(&accessToken)
+				
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{
+						"error": "Shop not found or not connected",
+						"shop": shopDomain,
+					})
+					return
+				}
+				
+				// Get webhook status from Shopify
+				webhookStatus := getWebhookStatus(shopDomain, accessToken)
+				
+				c.JSON(http.StatusOK, gin.H{
+					"shop": shopDomain,
+					"webhooks": webhookStatus,
+					"message": "Webhook status retrieved successfully",
+				})
+			})
+			
+			// Webhook Management - Re-setup webhooks for a shop
+			webhooks.POST("/setup/:shop", func(c *gin.Context) {
+				shopDomain := c.Param("shop")
+				
+				// Get access token for the shop
+				var accessToken string
+				err := db.QueryRow(`
+					SELECT access_token FROM connectors 
+					WHERE shop_domain = $1 AND status = 'ACTIVE'
+				`, shopDomain).Scan(&accessToken)
+				
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{
+						"error": "Shop not found or not connected",
+						"shop": shopDomain,
+					})
+					return
+				}
+				
+				// Setup webhooks
+				webhookResults := setupAutomaticWebhooks(shopDomain, accessToken)
+				
+				// Count successful webhooks
+				successCount := 0
+				for _, result := range webhookResults {
+					if result["success"].(bool) {
+						successCount++
+					}
+				}
+				
+				c.JSON(http.StatusOK, gin.H{
+					"shop": shopDomain,
+					"webhooks": gin.H{
+						"setup_completed": true,
+						"successful_webhooks": successCount,
+						"total_webhooks": len(webhookResults),
+						"details": webhookResults,
+					},
+					"message": "Webhooks setup completed",
+				})
+			})
+			
+			// Webhook Analytics
+			webhooks.GET("/analytics", func(c *gin.Context) {
 			var analytics struct {
 				TotalWebhooks      int     `json:"total_webhooks"`
 				ProductUpdates     int     `json:"product_updates"`
@@ -3430,13 +3703,34 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Return success with connector info
+				// 🚀 AUTOMATIC WEBHOOK SETUP - No manual configuration needed!
+				webhookResults := setupAutomaticWebhooks(shop, accessToken)
+				
+				// Log webhook setup results
+				fmt.Printf("🔗 Webhook Setup Results for %s:\n", shop)
+				successCount := 0
+				for topic, result := range webhookResults {
+					if result["success"].(bool) {
+						fmt.Printf("✅ %s: %s\n", topic, result["message"])
+						successCount++
+					} else {
+						fmt.Printf("❌ %s: %s\n", topic, result["message"])
+					}
+				}
+
+				// Return success with connector info and webhook status
 				c.JSON(http.StatusOK, gin.H{
 					"message":      "Shopify store connected successfully",
 					"shop":         shop,
 					"state":        state,
 					"connector_id": connectorID,
-					"note":         "Real access token obtained and stored",
+					"webhooks": gin.H{
+						"setup_completed": true,
+						"successful_webhooks": successCount,
+						"total_webhooks": len(webhookResults),
+						"details": webhookResults,
+					},
+					"note": "Real access token obtained, stored, and webhooks automatically configured",
 				})
 			})
 
