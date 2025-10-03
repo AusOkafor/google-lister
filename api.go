@@ -308,12 +308,32 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Exchange code for token (simplified for demo)
+				// For demo purposes, create a mock access token
+				// In production, you would exchange the code for a real access token
+				mockAccessToken := fmt.Sprintf("mock_token_%d", time.Now().Unix())
+
+				// Create and save connector
+				connectorMutex.Lock()
+				connectorCounter++
+				connector := Connector{
+					ID:          fmt.Sprintf("connector_%d", connectorCounter),
+					Name:        fmt.Sprintf("Shopify Store - %s", shop),
+					Type:        "SHOPIFY",
+					Status:      "ACTIVE",
+					ShopDomain:  shop,
+					AccessToken: mockAccessToken,
+					CreatedAt:   time.Now(),
+				}
+				connectors = append(connectors, connector)
+				connectorMutex.Unlock()
+
+				// Return success with connector info
 				c.JSON(http.StatusOK, gin.H{
-					"message": "Shopify store connected successfully",
-					"shop":    shop,
-					"state":   state,
-					"note":    "Token exchange implementation needed",
+					"message":      "Shopify store connected successfully",
+					"shop":         shop,
+					"state":        state,
+					"connector_id": connector.ID,
+					"note":         "Token exchange implementation needed",
 				})
 			})
 
