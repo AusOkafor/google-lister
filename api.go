@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -59,21 +61,144 @@ func initDB() error {
 		return err
 	}
 
-	// Create connectors table if it doesn't exist
-	createTableSQL := `
-	CREATE TABLE IF NOT EXISTS connectors (
-		id VARCHAR(255) PRIMARY KEY,
-		name VARCHAR(255) NOT NULL,
-		type VARCHAR(50) NOT NULL,
-		status VARCHAR(50) NOT NULL,
-		shop_domain VARCHAR(255) NOT NULL,
-		access_token TEXT NOT NULL,
-		created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-		last_sync TIMESTAMP WITH TIME ZONE
-	);`
+	// Create all required tables
+	tables := []string{
+		`CREATE TABLE IF NOT EXISTS connectors (
+			id VARCHAR(255) PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			type VARCHAR(50) NOT NULL,
+			status VARCHAR(50) NOT NULL,
+			shop_domain VARCHAR(255) NOT NULL,
+			access_token TEXT NOT NULL,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			last_sync TIMESTAMP WITH TIME ZONE
+		);`,
+		`CREATE TABLE IF NOT EXISTS products (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			connector_id VARCHAR(255) REFERENCES connectors(id),
+			external_id VARCHAR(255) NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT,
+			price DECIMAL(10,2),
+			currency VARCHAR(3) DEFAULT 'USD',
+			sku VARCHAR(255),
+			gtin VARCHAR(255),
+			brand VARCHAR(255),
+			category VARCHAR(255),
+			images TEXT[],
+			variants JSONB,
+			shipping JSONB,
+			custom_labels TEXT[],
+			metadata JSONB,
+			status VARCHAR(50) DEFAULT 'ACTIVE',
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		);`,
+		`CREATE TABLE IF NOT EXISTS feed_variants (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			product_id UUID REFERENCES products(id),
+			name VARCHAR(255) NOT NULL,
+			config JSONB,
+			transformation JSONB,
+			status VARCHAR(50) DEFAULT 'ACTIVE',
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		);`,
+		`CREATE TABLE IF NOT EXISTS issues (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			product_id UUID REFERENCES products(id),
+			connector_id VARCHAR(255) REFERENCES connectors(id),
+			type VARCHAR(100) NOT NULL,
+			severity VARCHAR(20) DEFAULT 'WARNING',
+			message TEXT NOT NULL,
+			details JSONB,
+			status VARCHAR(50) DEFAULT 'OPEN',
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			resolved_at TIMESTAMP WITH TIME ZONE
+		);`,
+		`CREATE TABLE IF NOT EXISTS channels (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			name VARCHAR(255) NOT NULL,
+			type VARCHAR(50) NOT NULL,
+			config JSONB,
+			credentials JSONB,
+			status VARCHAR(50) DEFAULT 'ACTIVE',
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		);`,
+		`CREATE TABLE IF NOT EXISTS organizations (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			name VARCHAR(255) NOT NULL,
+			domain VARCHAR(255),
+			settings JSONB,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		);`,
+		`CREATE TABLE IF NOT EXISTS users (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			organization_id UUID REFERENCES organizations(id),
+			email VARCHAR(255) UNIQUE NOT NULL,
+			name VARCHAR(255),
+			role VARCHAR(50) DEFAULT 'USER',
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		);`,
+	}
 
-	_, err = db.Exec(createTableSQL)
-	return err
+	// Execute all table creation statements
+	for _, tableSQL := range tables {
+		_, err = db.Exec(tableSQL)
+		if err != nil {
+			return fmt.Errorf("failed to create table: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// exchangeCodeForToken exchanges authorization code for access token
+func exchangeCodeForToken(code, shop, clientID, clientSecret string) (string, error) {
+	// Clean shop domain
+	cleanDomain := shop
+	if strings.HasSuffix(shop, ".myshopify.com") {
+		cleanDomain = strings.TrimSuffix(shop, ".myshopify.com")
+	}
+
+	// Prepare token exchange request
+	data := url.Values{}
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
+	data.Set("code", code)
+
+	// Make request to Shopify
+	tokenURL := fmt.Sprintf("https://%s.myshopify.com/admin/oauth/access_token", cleanDomain)
+	resp, err := http.PostForm(tokenURL, data)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	// Parse JSON response
+	var tokenResponse struct {
+		AccessToken string `json:"access_token"`
+		Scope       string `json:"scope"`
+	}
+
+	if err := json.Unmarshal(body, &tokenResponse); err != nil {
+		return "", err
+	}
+
+	if tokenResponse.AccessToken == "" {
+		return "", fmt.Errorf("no access token in response: %s", string(body))
+	}
+
+	return tokenResponse.AccessToken, nil
 }
 
 // Handler is the main entry point for Vercel
@@ -385,20 +510,24 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// For demo purposes, create a mock access token
-				// In production, you would exchange the code for a real access token
-				mockAccessToken := fmt.Sprintf("mock_token_%d", time.Now().Unix())
+				// Exchange authorization code for access token
+				accessToken, err := exchangeCodeForToken(code, shop, clientID, clientSecret)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code for token"})
+					return
+				}
+
 				connectorID := fmt.Sprintf("connector_%d", time.Now().Unix())
 
 				// Save connector to Supabase database
-				_, err := db.Exec(`
+				_, err = db.Exec(`
 					INSERT INTO connectors (id, name, type, status, shop_domain, access_token, created_at)
 					VALUES ($1, $2, $3, $4, $5, $6, $7)
 					ON CONFLICT (id) DO UPDATE SET
 						name = EXCLUDED.name,
 						status = EXCLUDED.status,
 						access_token = EXCLUDED.access_token
-				`, connectorID, fmt.Sprintf("Shopify Store - %s", shop), "SHOPIFY", "ACTIVE", shop, mockAccessToken, time.Now())
+				`, connectorID, fmt.Sprintf("Shopify Store - %s", shop), "SHOPIFY", "ACTIVE", shop, accessToken, time.Now())
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save connector to database"})
@@ -411,7 +540,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					"shop":         shop,
 					"state":        state,
 					"connector_id": connectorID,
-					"note":         "Token exchange implementation needed",
+					"note":         "Real access token obtained and stored",
 				})
 			})
 
