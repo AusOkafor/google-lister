@@ -384,7 +384,7 @@ func generateInstagramCSV(products []map[string]interface{}) string {
 // OpenRouter AI Configuration
 const (
 	OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
-	OPENROUTER_MODEL    = "microsoft/phi-3-mini-4k-instruct" // Working model
+	OPENROUTER_MODEL    = "meta-llama/llama-3.3-70b-instruct:free" // Best free model for e-commerce
 )
 
 // OpenRouterRequest represents the request structure for OpenRouter API
