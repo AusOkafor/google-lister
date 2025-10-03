@@ -480,13 +480,239 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	// API routes
 	api := router.Group("/api/v1")
 	{
-		// Products
-		api.GET("/products", func(c *gin.Context) {
-			c.JSON(200, gin.H{
-				"data":    []interface{}{},
-				"message": "Products endpoint - ready for database integration",
+		// Products Management
+		products := api.Group("/products")
+		{
+			// List all products with pagination and filtering
+			products.GET("/", func(c *gin.Context) {
+				// Get query parameters
+				page := c.DefaultQuery("page", "1")
+				limit := c.DefaultQuery("limit", "20")
+				search := c.Query("search")
+				category := c.Query("category")
+				status := c.DefaultQuery("status", "ACTIVE")
+				
+				// Convert to integers
+				pageInt := 1
+				limitInt := 20
+				if p, err := fmt.Sscanf(page, "%d", &pageInt); err == nil && p == 1 {
+					// Page converted successfully
+				}
+				if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
+					// Limit converted successfully
+				}
+				
+				// Calculate offset
+				offset := (pageInt - 1) * limitInt
+				
+				// Build query
+				whereClause := "WHERE status = $1"
+				args := []interface{}{status}
+				argIndex := 2
+				
+				if search != "" {
+					whereClause += fmt.Sprintf(" AND (title ILIKE $%d OR description ILIKE $%d OR brand ILIKE $%d)", argIndex, argIndex, argIndex)
+					args = append(args, "%"+search+"%")
+					argIndex++
+				}
+				
+				if category != "" {
+					whereClause += fmt.Sprintf(" AND category = $%d", argIndex)
+					args = append(args, category)
+					argIndex++
+				}
+				
+				// Get total count
+				countQuery := fmt.Sprintf("SELECT COUNT(*) FROM products %s", whereClause)
+				var totalCount int
+				err := db.QueryRow(countQuery, args...).Scan(&totalCount)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count products"})
+					return
+				}
+				
+				// Get products
+				query := fmt.Sprintf(`
+					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+						   images, variants, metadata, status, created_at, updated_at
+					FROM products %s 
+					ORDER BY created_at DESC 
+					LIMIT $%d OFFSET $%d
+				`, whereClause, argIndex, argIndex+1)
+				
+				args = append(args, limitInt, offset)
+				
+				rows, err := db.Query(query, args...)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
+					return
+				}
+				defer rows.Close()
+				
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, sku, brand, category, status string
+					var price float64
+					var currency string
+					var images []string
+					var variants, metadata string
+					var createdAt, updatedAt time.Time
+					
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category, 
+									&images, &variants, &metadata, &status, &createdAt, &updatedAt)
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan product"})
+						return
+					}
+					
+					products = append(products, map[string]interface{}{
+						"id":          id,
+						"external_id":  externalID,
+						"title":       title,
+						"description": description,
+						"price":       price,
+						"currency":    currency,
+						"sku":         sku,
+						"brand":       brand,
+						"category":    category,
+						"images":      images,
+						"variants":    variants,
+						"metadata":    metadata,
+						"status":      status,
+						"created_at":  createdAt,
+						"updated_at":  updatedAt,
+					})
+				}
+				
+				// Calculate pagination info
+				totalPages := (totalCount + limitInt - 1) / limitInt
+				
+				c.JSON(http.StatusOK, gin.H{
+					"data": products,
+					"pagination": gin.H{
+						"page":         pageInt,
+						"limit":        limitInt,
+						"total":        totalCount,
+						"total_pages":  totalPages,
+						"has_next":     pageInt < totalPages,
+						"has_prev":     pageInt > 1,
+					},
+					"message": "Products retrieved successfully",
+				})
 			})
-		})
+			
+			// Get single product by ID
+			products.GET("/:id", func(c *gin.Context) {
+				productID := c.Param("id")
+				
+				var id, externalID, title, description, sku, brand, category, status string
+				var price float64
+				var currency string
+				var images []string
+				var variants, metadata string
+				var createdAt, updatedAt time.Time
+				
+				err := db.QueryRow(`
+					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+						   images, variants, metadata, status, created_at, updated_at
+					FROM products 
+					WHERE id = $1
+				`, productID).Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category, 
+									&images, &variants, &metadata, &status, &createdAt, &updatedAt)
+				
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+					return
+				}
+				
+				c.JSON(http.StatusOK, gin.H{
+					"data": map[string]interface{}{
+						"id":          id,
+						"external_id":  externalID,
+						"title":       title,
+						"description": description,
+						"price":       price,
+						"currency":    currency,
+						"sku":         sku,
+						"brand":       brand,
+						"category":    category,
+						"images":      images,
+						"variants":    variants,
+						"metadata":    metadata,
+						"status":      status,
+						"created_at":  createdAt,
+						"updated_at":  updatedAt,
+					},
+					"message": "Product retrieved successfully",
+				})
+			})
+			
+			// Update product
+			products.PUT("/:id", func(c *gin.Context) {
+				productID := c.Param("id")
+				
+				var request struct {
+					Title       string  `json:"title"`
+					Description string  `json:"description"`
+					Price       float64 `json:"price"`
+					SKU         string  `json:"sku"`
+					Brand       string  `json:"brand"`
+					Category    string  `json:"category"`
+					Status      string  `json:"status"`
+				}
+				
+				if err := c.ShouldBindJSON(&request); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+				
+				_, err := db.Exec(`
+					UPDATE products 
+					SET title = $1, description = $2, price = $3, sku = $4, brand = $5, category = $6, status = $7, updated_at = NOW()
+					WHERE id = $8
+				`, request.Title, request.Description, request.Price, request.SKU, request.Brand, request.Category, request.Status, productID)
+				
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update product"})
+					return
+				}
+				
+				c.JSON(http.StatusOK, gin.H{
+					"message": "Product updated successfully",
+				})
+			})
+			
+			// Get product statistics
+			products.GET("/stats", func(c *gin.Context) {
+				var stats struct {
+					TotalProducts    int     `json:"total_products"`
+					ActiveProducts  int     `json:"active_products"`
+					AveragePrice    float64 `json:"average_price"`
+					Categories      int     `json:"categories"`
+					Brands          int     `json:"brands"`
+				}
+				
+				// Get total products
+				db.QueryRow("SELECT COUNT(*) FROM products").Scan(&stats.TotalProducts)
+				
+				// Get active products
+				db.QueryRow("SELECT COUNT(*) FROM products WHERE status = 'ACTIVE'").Scan(&stats.ActiveProducts)
+				
+				// Get average price
+				db.QueryRow("SELECT AVG(price) FROM products WHERE price > 0").Scan(&stats.AveragePrice)
+				
+				// Get unique categories
+				db.QueryRow("SELECT COUNT(DISTINCT category) FROM products WHERE category IS NOT NULL AND category != ''").Scan(&stats.Categories)
+				
+				// Get unique brands
+				db.QueryRow("SELECT COUNT(DISTINCT brand) FROM products WHERE brand IS NOT NULL AND brand != ''").Scan(&stats.Brands)
+				
+				c.JSON(http.StatusOK, gin.H{
+					"data":    stats,
+					"message": "Product statistics retrieved successfully",
+				})
+			})
+		}
 
 		// Connectors
 		api.GET("/connectors", func(c *gin.Context) {
@@ -736,8 +962,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					_, err := db.Exec(`
 						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status)
 						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-					`, connectorID, fmt.Sprintf("%d", product.ID), product.Title, product.Description, price, "USD", sku, product.Vendor, product.ProductType, 
-					   imageURLsArray, string(variantsJSON), string(metafieldsJSON), "ACTIVE")
+					`, connectorID, fmt.Sprintf("%d", product.ID), product.Title, product.Description, price, "USD", sku, product.Vendor, product.ProductType,
+						imageURLsArray, string(variantsJSON), string(metafieldsJSON), "ACTIVE")
 
 					if err != nil {
 						errors = append(errors, fmt.Sprintf("Product %s: %v", product.Title, err))
