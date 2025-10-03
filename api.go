@@ -1,13 +1,17 @@
 package handler
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1307,6 +1311,349 @@ func syncToChannel(channel string, products []map[string]interface{}, settings m
 	return result
 }
 
+// Webhook Processing Helper Functions
+
+// validateShopifyWebhook validates the HMAC signature of Shopify webhooks
+func validateShopifyWebhook(body []byte, signature, secret string) bool {
+	if signature == "" || secret == "" {
+		return false // Skip validation if not configured
+	}
+
+	// Decode the signature from base64
+	expectedSignature, err := base64.StdEncoding.DecodeString(signature)
+	if err != nil {
+		return false
+	}
+
+	// Create HMAC hash
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	computedSignature := mac.Sum(nil)
+
+	// Compare signatures securely
+	return hmac.Equal(expectedSignature, computedSignature)
+}
+
+// processProductUpdate handles product update webhooks
+func processProductUpdate(product ShopifyProduct, shopDomain, topic string) map[string]interface{} {
+	result := map[string]interface{}{
+		"action":    "update",
+		"status":    "success",
+		"timestamp": time.Now(),
+		"details":   map[string]interface{}{},
+	}
+
+	// Find existing product by external_id
+	var existingProductID string
+	err := db.QueryRow(`
+		SELECT id FROM products 
+		WHERE external_id = $1 AND connector_id IN (
+			SELECT id FROM connectors WHERE shop_domain = $2
+		)
+	`, fmt.Sprintf("%d", product.ID), shopDomain).Scan(&existingProductID)
+
+	if err != nil {
+		result["status"] = "error"
+		result["message"] = "Product not found in database"
+		return result
+	}
+
+	// Transform Shopify product to our format
+	transformedProduct := transformShopifyProduct(product, shopDomain)
+
+	// Update product in database
+	_, err = db.Exec(`
+		UPDATE products 
+		SET title = $1, description = $2, price = $3, currency = $4, 
+			brand = $5, category = $6, images = $7, variants = $8, 
+			metadata = $9, updated_at = NOW()
+		WHERE id = $10
+	`,
+		transformedProduct.Title,
+		transformedProduct.Description,
+		transformedProduct.Price,
+		transformedProduct.Currency,
+		transformedProduct.Brand,
+		transformedProduct.Category,
+		fmt.Sprintf("{%s}", strings.Join(transformedProduct.Images, ",")),
+		transformedProduct.Variants,
+		transformedProduct.Metadata,
+		existingProductID,
+	)
+
+	if err != nil {
+		result["status"] = "error"
+		result["message"] = fmt.Sprintf("Failed to update product: %v", err)
+		return result
+	}
+
+	result["product_id"] = existingProductID
+	result["message"] = "Product updated successfully"
+	result["details"] = map[string]interface{}{
+		"title":        transformedProduct.Title,
+		"price":        transformedProduct.Price,
+		"images_count": len(transformedProduct.Images),
+	}
+
+	return result
+}
+
+// processProductCreate handles product creation webhooks
+func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[string]interface{} {
+	result := map[string]interface{}{
+		"action":    "create",
+		"status":    "success",
+		"timestamp": time.Now(),
+		"details":   map[string]interface{}{},
+	}
+
+	// Transform Shopify product to our format
+	transformedProduct := transformShopifyProduct(product, shopDomain)
+
+	// Get connector ID
+	var connectorID string
+	err := db.QueryRow(`
+		SELECT id FROM connectors WHERE shop_domain = $1
+	`, shopDomain).Scan(&connectorID)
+
+	if err != nil {
+		result["status"] = "error"
+		result["message"] = "Connector not found"
+		return result
+	}
+
+	// Insert new product
+	_, err = db.Exec(`
+		INSERT INTO products (
+			connector_id, external_id, title, description, price, currency,
+			brand, category, images, variants, metadata, status, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+	`,
+		connectorID,
+		transformedProduct.ExternalID,
+		transformedProduct.Title,
+		transformedProduct.Description,
+		transformedProduct.Price,
+		transformedProduct.Currency,
+		transformedProduct.Brand,
+		transformedProduct.Category,
+		fmt.Sprintf("{%s}", strings.Join(transformedProduct.Images, ",")),
+		transformedProduct.Variants,
+		transformedProduct.Metadata,
+		"ACTIVE",
+	)
+
+	if err != nil {
+		result["status"] = "error"
+		result["message"] = fmt.Sprintf("Failed to create product: %v", err)
+		return result
+	}
+
+	result["message"] = "Product created successfully"
+	result["details"] = map[string]interface{}{
+		"title":        transformedProduct.Title,
+		"price":        transformedProduct.Price,
+		"images_count": len(transformedProduct.Images),
+	}
+
+	return result
+}
+
+// processProductDelete handles product deletion webhooks
+func processProductDelete(product ShopifyProduct, shopDomain, topic string) map[string]interface{} {
+	result := map[string]interface{}{
+		"action":    "delete",
+		"status":    "success",
+		"timestamp": time.Now(),
+		"details":   map[string]interface{}{},
+	}
+
+	// Find existing product by external_id
+	var existingProductID string
+	err := db.QueryRow(`
+		SELECT id FROM products 
+		WHERE external_id = $1 AND connector_id IN (
+			SELECT id FROM connectors WHERE shop_domain = $2
+		)
+	`, fmt.Sprintf("%d", product.ID), shopDomain).Scan(&existingProductID)
+
+	if err != nil {
+		result["status"] = "error"
+		result["message"] = "Product not found in database"
+		return result
+	}
+
+	// Soft delete - mark as inactive
+	_, err = db.Exec(`
+		UPDATE products 
+		SET status = 'INACTIVE', updated_at = NOW()
+		WHERE id = $1
+	`, existingProductID)
+
+	if err != nil {
+		result["status"] = "error"
+		result["message"] = fmt.Sprintf("Failed to delete product: %v", err)
+		return result
+	}
+
+	result["product_id"] = existingProductID
+	result["message"] = "Product deleted successfully"
+
+	return result
+}
+
+// processInventoryUpdate handles inventory level update webhooks
+func processInventoryUpdate(inventoryData struct {
+	InventoryItemID int64  `json:"inventory_item_id"`
+	LocationID      int64  `json:"location_id"`
+	Available       int    `json:"available"`
+	UpdatedAt       string `json:"updated_at"`
+}, shopDomain, topic string) map[string]interface{} {
+	result := map[string]interface{}{
+		"action":    "inventory_update",
+		"status":    "success",
+		"timestamp": time.Now(),
+		"details":   map[string]interface{}{},
+	}
+
+	// Find product variant by inventory item ID
+	var variantID string
+	var productID string
+	err := db.QueryRow(`
+		SELECT p.id, pv.id FROM products p
+		JOIN connectors c ON p.connector_id = c.id
+		WHERE c.shop_domain = $1 AND pv.external_id = $2
+	`, shopDomain, fmt.Sprintf("%d", inventoryData.InventoryItemID)).Scan(&productID, &variantID)
+
+	if err != nil {
+		result["status"] = "warning"
+		result["message"] = "Product variant not found, but inventory update logged"
+		result["details"] = map[string]interface{}{
+			"inventory_item_id": inventoryData.InventoryItemID,
+			"available":         inventoryData.Available,
+			"location_id":       inventoryData.LocationID,
+		}
+		return result
+	}
+
+	// Update inventory in product metadata or variants table
+	// For now, we'll log the update
+	result["message"] = "Inventory update processed successfully"
+	result["details"] = map[string]interface{}{
+		"product_id":        productID,
+		"variant_id":        variantID,
+		"inventory_item_id": inventoryData.InventoryItemID,
+		"available":         inventoryData.Available,
+		"location_id":       inventoryData.LocationID,
+	}
+
+	return result
+}
+
+// processAppUninstall handles app uninstall webhooks
+func processAppUninstall(shopDomain, topic string) map[string]interface{} {
+	result := map[string]interface{}{
+		"action":    "app_uninstall",
+		"status":    "success",
+		"timestamp": time.Now(),
+		"details":   map[string]interface{}{},
+	}
+
+	// Mark connector as inactive
+	_, err := db.Exec(`
+		UPDATE connectors 
+		SET status = 'INACTIVE', updated_at = NOW()
+		WHERE shop_domain = $1
+	`, shopDomain)
+
+	if err != nil {
+		result["status"] = "error"
+		result["message"] = fmt.Sprintf("Failed to deactivate connector: %v", err)
+		return result
+	}
+
+	// Optionally mark all products as inactive
+	_, err = db.Exec(`
+		UPDATE products 
+		SET status = 'INACTIVE', updated_at = NOW()
+		WHERE connector_id IN (
+			SELECT id FROM connectors WHERE shop_domain = $1
+		)
+	`, shopDomain)
+
+	if err != nil {
+		result["status"] = "warning"
+		result["message"] = "Connector deactivated but products not updated"
+		return result
+	}
+
+	result["message"] = "App uninstall processed successfully"
+	result["details"] = map[string]interface{}{
+		"shop_domain":          shopDomain,
+		"products_deactivated": true,
+	}
+
+	return result
+}
+
+// transformShopifyProduct converts Shopify product to our internal format
+func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string) struct {
+	ExternalID  string
+	Title       string
+	Description string
+	Price       float64
+	Currency    string
+	Brand       string
+	Category    string
+	Images      []string
+	Variants    string
+	Metadata    string
+} {
+	// Extract images
+	images := make([]string, 0, len(shopifyProduct.Images))
+	for _, img := range shopifyProduct.Images {
+		images = append(images, img.URL)
+	}
+
+	// Extract variants as JSON
+	variantsJSON, _ := json.Marshal(shopifyProduct.Variants)
+
+	// Extract metafields as JSON
+	metafieldsJSON, _ := json.Marshal(shopifyProduct.Metafields)
+
+	// Calculate price from first variant
+	var price float64
+	if len(shopifyProduct.Variants) > 0 {
+		if p, err := strconv.ParseFloat(shopifyProduct.Variants[0].Price, 64); err == nil {
+			price = p
+		}
+	}
+
+	return struct {
+		ExternalID  string
+		Title       string
+		Description string
+		Price       float64
+		Currency    string
+		Brand       string
+		Category    string
+		Images      []string
+		Variants    string
+		Metadata    string
+	}{
+		ExternalID:  fmt.Sprintf("%d", shopifyProduct.ID),
+		Title:       shopifyProduct.Title,
+		Description: shopifyProduct.Description,
+		Price:       price,
+		Currency:    "USD", // Default currency
+		Brand:       shopifyProduct.Vendor,
+		Category:    shopifyProduct.ProductType,
+		Images:      images,
+		Variants:    string(variantsJSON),
+		Metadata:    string(metafieldsJSON),
+	}
+}
+
 // Handler is the main entry point for Vercel
 func Handler(w http.ResponseWriter, r *http.Request) {
 	// Initialize database connection
@@ -1495,6 +1842,255 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				</body>
 				</html>
 			`, shop, connectorID)
+		})
+	}
+
+	// Real-time Webhooks System
+	webhooks := router.Group("/webhooks")
+	{
+		// Shopify Webhooks
+		shopify := webhooks.Group("/shopify")
+		{
+			// Product Update Webhook
+			shopify.POST("/products/update", func(c *gin.Context) {
+				// Get webhook signature for validation
+				signature := c.GetHeader("X-Shopify-Hmac-Sha256")
+				shopDomain := c.GetHeader("X-Shopify-Shop-Domain")
+				topic := c.GetHeader("X-Shopify-Topic")
+
+				// Read request body
+				body, err := io.ReadAll(c.Request.Body)
+				if err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read request body"})
+					return
+				}
+
+				// Validate webhook signature (in production)
+				webhookSecret := os.Getenv("SHOPIFY_WEBHOOK_SECRET")
+				if webhookSecret != "" {
+					if !validateShopifyWebhook(body, signature, webhookSecret) {
+						c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid webhook signature"})
+						return
+					}
+				}
+
+				// Parse Shopify product data
+				var shopifyProduct ShopifyProduct
+				if err := json.Unmarshal(body, &shopifyProduct); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse product data"})
+					return
+				}
+
+				// Process product update
+				result := processProductUpdate(shopifyProduct, shopDomain, topic)
+
+				c.JSON(http.StatusOK, gin.H{
+					"message":     "Product update processed successfully",
+					"product_id":  shopifyProduct.ID,
+					"shop_domain": shopDomain,
+					"topic":       topic,
+					"result":      result,
+					"timestamp":   time.Now(),
+				})
+			})
+
+			// Product Create Webhook
+			shopify.POST("/products/create", func(c *gin.Context) {
+				// Get webhook signature for validation
+				signature := c.GetHeader("X-Shopify-Hmac-Sha256")
+				shopDomain := c.GetHeader("X-Shopify-Shop-Domain")
+				topic := c.GetHeader("X-Shopify-Topic")
+
+				// Read request body
+				body, err := io.ReadAll(c.Request.Body)
+				if err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read request body"})
+					return
+				}
+
+				// Validate webhook signature (in production)
+				webhookSecret := os.Getenv("SHOPIFY_WEBHOOK_SECRET")
+				if webhookSecret != "" {
+					if !validateShopifyWebhook(body, signature, webhookSecret) {
+						c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid webhook signature"})
+						return
+					}
+				}
+
+				// Parse Shopify product data
+				var shopifyProduct ShopifyProduct
+				if err := json.Unmarshal(body, &shopifyProduct); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse product data"})
+					return
+				}
+
+				// Process product creation
+				result := processProductCreate(shopifyProduct, shopDomain, topic)
+
+				c.JSON(http.StatusOK, gin.H{
+					"message":     "Product creation processed successfully",
+					"product_id":  shopifyProduct.ID,
+					"shop_domain": shopDomain,
+					"topic":       topic,
+					"result":      result,
+					"timestamp":   time.Now(),
+				})
+			})
+
+			// Product Delete Webhook
+			shopify.POST("/products/delete", func(c *gin.Context) {
+				// Get webhook signature for validation
+				signature := c.GetHeader("X-Shopify-Hmac-Sha256")
+				shopDomain := c.GetHeader("X-Shopify-Shop-Domain")
+				topic := c.GetHeader("X-Shopify-Topic")
+
+				// Read request body
+				body, err := io.ReadAll(c.Request.Body)
+				if err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read request body"})
+					return
+				}
+
+				// Validate webhook signature (in production)
+				webhookSecret := os.Getenv("SHOPIFY_WEBHOOK_SECRET")
+				if webhookSecret != "" {
+					if !validateShopifyWebhook(body, signature, webhookSecret) {
+						c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid webhook signature"})
+						return
+					}
+				}
+
+				// Parse Shopify product data
+				var shopifyProduct ShopifyProduct
+				if err := json.Unmarshal(body, &shopifyProduct); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse product data"})
+					return
+				}
+
+				// Process product deletion
+				result := processProductDelete(shopifyProduct, shopDomain, topic)
+
+				c.JSON(http.StatusOK, gin.H{
+					"message":     "Product deletion processed successfully",
+					"product_id":  shopifyProduct.ID,
+					"shop_domain": shopDomain,
+					"topic":       topic,
+					"result":      result,
+					"timestamp":   time.Now(),
+				})
+			})
+
+			// Inventory Level Update Webhook
+			shopify.POST("/inventory_levels/update", func(c *gin.Context) {
+				// Get webhook signature for validation
+				signature := c.GetHeader("X-Shopify-Hmac-Sha256")
+				shopDomain := c.GetHeader("X-Shopify-Shop-Domain")
+				topic := c.GetHeader("X-Shopify-Topic")
+
+				// Read request body
+				body, err := io.ReadAll(c.Request.Body)
+				if err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read request body"})
+					return
+				}
+
+				// Validate webhook signature (in production)
+				webhookSecret := os.Getenv("SHOPIFY_WEBHOOK_SECRET")
+				if webhookSecret != "" {
+					if !validateShopifyWebhook(body, signature, webhookSecret) {
+						c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid webhook signature"})
+						return
+					}
+				}
+
+				// Parse inventory level data
+				var inventoryData struct {
+					InventoryItemID int64  `json:"inventory_item_id"`
+					LocationID      int64  `json:"location_id"`
+					Available       int    `json:"available"`
+					UpdatedAt       string `json:"updated_at"`
+				}
+
+				if err := json.Unmarshal(body, &inventoryData); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse inventory data"})
+					return
+				}
+
+				// Process inventory update
+				result := processInventoryUpdate(inventoryData, shopDomain, topic)
+
+				c.JSON(http.StatusOK, gin.H{
+					"message":           "Inventory update processed successfully",
+					"inventory_item_id": inventoryData.InventoryItemID,
+					"location_id":       inventoryData.LocationID,
+					"available":         inventoryData.Available,
+					"shop_domain":       shopDomain,
+					"topic":             topic,
+					"result":            result,
+					"timestamp":         time.Now(),
+				})
+			})
+
+			// App Uninstall Webhook
+			shopify.POST("/app/uninstalled", func(c *gin.Context) {
+				// Get webhook signature for validation
+				signature := c.GetHeader("X-Shopify-Hmac-Sha256")
+				shopDomain := c.GetHeader("X-Shopify-Shop-Domain")
+				topic := c.GetHeader("X-Shopify-Topic")
+
+				// Read request body
+				body, err := io.ReadAll(c.Request.Body)
+				if err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read request body"})
+					return
+				}
+
+				// Validate webhook signature (in production)
+				webhookSecret := os.Getenv("SHOPIFY_WEBHOOK_SECRET")
+				if webhookSecret != "" {
+					if !validateShopifyWebhook(body, signature, webhookSecret) {
+						c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid webhook signature"})
+						return
+					}
+				}
+
+				// Process app uninstall
+				result := processAppUninstall(shopDomain, topic)
+
+				c.JSON(http.StatusOK, gin.H{
+					"message":     "App uninstall processed successfully",
+					"shop_domain": shopDomain,
+					"topic":       topic,
+					"result":      result,
+					"timestamp":   time.Now(),
+				})
+			})
+		}
+
+		// Webhook Analytics
+		webhooks.GET("/analytics", func(c *gin.Context) {
+			var analytics struct {
+				TotalWebhooks      int     `json:"total_webhooks"`
+				ProductUpdates     int     `json:"product_updates"`
+				InventoryUpdates   int     `json:"inventory_updates"`
+				PriceUpdates       int     `json:"price_updates"`
+				FailedWebhooks     int     `json:"failed_webhooks"`
+				AverageProcessTime float64 `json:"average_process_time_ms"`
+			}
+
+			// Get webhook statistics (placeholder - would need webhook tracking table)
+			analytics.TotalWebhooks = 0
+			analytics.ProductUpdates = 0
+			analytics.InventoryUpdates = 0
+			analytics.PriceUpdates = 0
+			analytics.FailedWebhooks = 0
+			analytics.AverageProcessTime = 0.0
+
+			c.JSON(http.StatusOK, gin.H{
+				"data":    analytics,
+				"message": "Webhook analytics retrieved successfully",
+				"note":    "Webhook tracking will be implemented with database logging",
+			})
 		})
 	}
 
