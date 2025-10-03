@@ -389,9 +389,9 @@ const (
 
 // OpenRouterRequest represents the request structure for OpenRouter API
 type OpenRouterRequest struct {
-	Model    string                 `json:"model"`
-	Messages []OpenRouterMessage    `json:"messages"`
-	MaxTokens int                   `json:"max_tokens,omitempty"`
+	Model       string              `json:"model"`
+	Messages    []OpenRouterMessage `json:"messages"`
+	MaxTokens   int                 `json:"max_tokens,omitempty"`
 	Temperature float64             `json:"temperature,omitempty"`
 }
 
@@ -417,6 +417,9 @@ func callOpenRouterAI(prompt string, maxTokens int, temperature float64) (string
 	if apiKey == "" {
 		return "", fmt.Errorf("OPENROUTER_API_KEY not configured")
 	}
+	
+	// Log the API call for debugging
+	fmt.Printf("🤖 AI API Call: %s\n", prompt[:min(50, len(prompt))])
 
 	request := OpenRouterRequest{
 		Model:       OPENROUTER_MODEL,
@@ -470,6 +473,14 @@ func callOpenRouterAI(prompt string, maxTokens int, temperature float64) (string
 	return strings.TrimSpace(response.Choices[0].Message.Content), nil
 }
 
+// min returns the smaller of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // optimizeProductTitle generates SEO-optimized product titles using hybrid approach
 func optimizeProductTitle(title, description, brand, category, keywords string, maxLength int) string {
 	if maxLength == 0 {
@@ -479,11 +490,15 @@ func optimizeProductTitle(title, description, brand, category, keywords string, 
 	// Try AI optimization first
 	aiTitle, err := optimizeTitleWithAI(title, description, brand, category, keywords, maxLength)
 	if err == nil && aiTitle != "" {
+		fmt.Printf("✅ AI Title Optimization: %s\n", aiTitle)
 		return aiTitle
 	}
 
 	// Fallback to rule-based optimization
-	return optimizeTitleWithRules(title, description, brand, category, keywords, maxLength)
+	fmt.Printf("⚠️ AI Failed, using fallback: %s\n", err)
+	ruleTitle := optimizeTitleWithRules(title, description, brand, category, keywords, maxLength)
+	fmt.Printf("📝 Rule-based Title: %s\n", ruleTitle)
+	return ruleTitle
 }
 
 // optimizeTitleWithAI uses OpenRouter AI for title optimization
@@ -1992,6 +2007,30 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					"results":            results,
 					"success_count":      countSuccessfulTransformations(results),
 					"message":            "Bulk transformation completed successfully",
+				})
+			})
+
+			// AI Diagnostic Test
+			ai.GET("/test", func(c *gin.Context) {
+				// Test OpenRouter AI connection
+				testPrompt := "Say 'AI is working' if you can read this message."
+				
+				aiResponse, err := callOpenRouterAI(testPrompt, 20, 0.5)
+				if err != nil {
+					c.JSON(http.StatusOK, gin.H{
+						"ai_status": "FAILED",
+						"error": err.Error(),
+						"fallback_used": true,
+						"message": "AI is not working, using fallback system",
+					})
+					return
+				}
+				
+				c.JSON(http.StatusOK, gin.H{
+					"ai_status": "WORKING",
+					"ai_response": aiResponse,
+					"fallback_used": false,
+					"message": "AI is working correctly",
 				})
 			})
 
