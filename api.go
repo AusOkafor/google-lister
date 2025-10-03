@@ -491,7 +491,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				search := c.Query("search")
 				category := c.Query("category")
 				status := c.DefaultQuery("status", "ACTIVE")
-				
+
 				// Convert to integers
 				pageInt := 1
 				limitInt := 20
@@ -501,27 +501,27 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
 					// Limit converted successfully
 				}
-				
+
 				// Calculate offset
 				offset := (pageInt - 1) * limitInt
-				
+
 				// Build query
 				whereClause := "WHERE status = $1"
 				args := []interface{}{status}
 				argIndex := 2
-				
+
 				if search != "" {
 					whereClause += fmt.Sprintf(" AND (title ILIKE $%d OR description ILIKE $%d OR brand ILIKE $%d)", argIndex, argIndex, argIndex)
 					args = append(args, "%"+search+"%")
 					argIndex++
 				}
-				
+
 				if category != "" {
 					whereClause += fmt.Sprintf(" AND category = $%d", argIndex)
 					args = append(args, category)
 					argIndex++
 				}
-				
+
 				// Get total count
 				countQuery := fmt.Sprintf("SELECT COUNT(*) FROM products %s", whereClause)
 				var totalCount int
@@ -530,7 +530,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count products"})
 					return
 				}
-				
+
 				// Get products
 				query := fmt.Sprintf(`
 					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
@@ -539,22 +539,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					ORDER BY created_at DESC 
 					LIMIT $%d OFFSET $%d
 				`, whereClause, argIndex, argIndex+1)
-				
+
 				args = append(args, limitInt, offset)
-				
+
 				rows, err := db.Query(query, args...)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
 					return
 				}
 				defer rows.Close()
-				
+
 				var products []map[string]interface{}
 				for rows.Next() {
 					var id, externalID, title, description, sku, brand, category, status string
 					var price float64
 					var currency string
-					var images []string
+					var images string // Changed to string to handle PostgreSQL array
 					var variants, metadata string
 					var createdAt, updatedAt time.Time
 					
@@ -565,9 +565,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 					
+					// Parse images array from PostgreSQL format
+					var imageList []string
+					if images != "" {
+						// Remove curly braces and split by comma
+						cleanImages := strings.Trim(images, "{}")
+						if cleanImages != "" {
+							imageList = strings.Split(cleanImages, ",")
+						}
+					}
+
 					products = append(products, map[string]interface{}{
 						"id":          id,
-						"external_id":  externalID,
+						"external_id": externalID,
 						"title":       title,
 						"description": description,
 						"price":       price,
@@ -575,60 +585,70 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"sku":         sku,
 						"brand":       brand,
 						"category":    category,
-						"images":      images,
+						"images":      imageList,
 						"variants":    variants,
 						"metadata":    metadata,
-						"status":      status,
+						"status":     status,
 						"created_at":  createdAt,
 						"updated_at":  updatedAt,
 					})
 				}
-				
+
 				// Calculate pagination info
 				totalPages := (totalCount + limitInt - 1) / limitInt
-				
+
 				c.JSON(http.StatusOK, gin.H{
 					"data": products,
 					"pagination": gin.H{
-						"page":         pageInt,
-						"limit":        limitInt,
-						"total":        totalCount,
-						"total_pages":  totalPages,
-						"has_next":     pageInt < totalPages,
-						"has_prev":     pageInt > 1,
+						"page":        pageInt,
+						"limit":       limitInt,
+						"total":       totalCount,
+						"total_pages": totalPages,
+						"has_next":    pageInt < totalPages,
+						"has_prev":    pageInt > 1,
 					},
 					"message": "Products retrieved successfully",
 				})
 			})
-			
+
 			// Get single product by ID
 			products.GET("/:id", func(c *gin.Context) {
 				productID := c.Param("id")
-				
+
 				var id, externalID, title, description, sku, brand, category, status string
 				var price float64
 				var currency string
-				var images []string
+				var images string // Changed to string to handle PostgreSQL array
 				var variants, metadata string
 				var createdAt, updatedAt time.Time
-				
+
 				err := db.QueryRow(`
 					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
 						   images, variants, metadata, status, created_at, updated_at
 					FROM products 
 					WHERE id = $1
-				`, productID).Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category, 
-									&images, &variants, &metadata, &status, &createdAt, &updatedAt)
-				
+				`, productID).Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+					&images, &variants, &metadata, &status, &createdAt, &updatedAt)
+
 				if err != nil {
 					c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
 					return
 				}
 				
+				// Parse images array from PostgreSQL format
+				var imageList []string
+				if images != "" {
+					// Remove curly braces and split by comma
+					cleanImages := strings.Trim(images, "{}")
+					if cleanImages != "" {
+						imageList = strings.Split(cleanImages, ",")
+					}
+				}
+
 				c.JSON(http.StatusOK, gin.H{
 					"data": map[string]interface{}{
 						"id":          id,
-						"external_id":  externalID,
+						"external_id": externalID,
 						"title":       title,
 						"description": description,
 						"price":       price,
@@ -636,7 +656,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"sku":         sku,
 						"brand":       brand,
 						"category":    category,
-						"images":      images,
+						"images":      imageList,
 						"variants":    variants,
 						"metadata":    metadata,
 						"status":      status,
@@ -646,11 +666,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					"message": "Product retrieved successfully",
 				})
 			})
-			
+
 			// Update product
 			products.PUT("/:id", func(c *gin.Context) {
 				productID := c.Param("id")
-				
+
 				var request struct {
 					Title       string  `json:"title"`
 					Description string  `json:"description"`
@@ -660,53 +680,53 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					Category    string  `json:"category"`
 					Status      string  `json:"status"`
 				}
-				
+
 				if err := c.ShouldBindJSON(&request); err != nil {
 					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 					return
 				}
-				
+
 				_, err := db.Exec(`
 					UPDATE products 
 					SET title = $1, description = $2, price = $3, sku = $4, brand = $5, category = $6, status = $7, updated_at = NOW()
 					WHERE id = $8
 				`, request.Title, request.Description, request.Price, request.SKU, request.Brand, request.Category, request.Status, productID)
-				
+
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update product"})
 					return
 				}
-				
+
 				c.JSON(http.StatusOK, gin.H{
 					"message": "Product updated successfully",
 				})
 			})
-			
+
 			// Get product statistics
 			products.GET("/stats", func(c *gin.Context) {
 				var stats struct {
-					TotalProducts    int     `json:"total_products"`
-					ActiveProducts  int     `json:"active_products"`
-					AveragePrice    float64 `json:"average_price"`
-					Categories      int     `json:"categories"`
-					Brands          int     `json:"brands"`
+					TotalProducts  int     `json:"total_products"`
+					ActiveProducts int     `json:"active_products"`
+					AveragePrice   float64 `json:"average_price"`
+					Categories     int     `json:"categories"`
+					Brands         int     `json:"brands"`
 				}
-				
+
 				// Get total products
 				db.QueryRow("SELECT COUNT(*) FROM products").Scan(&stats.TotalProducts)
-				
+
 				// Get active products
 				db.QueryRow("SELECT COUNT(*) FROM products WHERE status = 'ACTIVE'").Scan(&stats.ActiveProducts)
-				
+
 				// Get average price
 				db.QueryRow("SELECT AVG(price) FROM products WHERE price > 0").Scan(&stats.AveragePrice)
-				
+
 				// Get unique categories
 				db.QueryRow("SELECT COUNT(DISTINCT category) FROM products WHERE category IS NOT NULL AND category != ''").Scan(&stats.Categories)
-				
+
 				// Get unique brands
 				db.QueryRow("SELECT COUNT(DISTINCT brand) FROM products WHERE brand IS NOT NULL AND brand != ''").Scan(&stats.Brands)
-				
+
 				c.JSON(http.StatusOK, gin.H{
 					"data":    stats,
 					"message": "Product statistics retrieved successfully",
