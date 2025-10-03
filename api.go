@@ -30,16 +30,32 @@ type Connector struct {
 
 // ShopifyProduct represents a product from Shopify API
 type ShopifyProduct struct {
-	ID          string                 `json:"id"`
-	Title       string                 `json:"title"`
-	Description string                 `json:"body_html"`
-	Price       float64                `json:"price"`
-	SKU         string                 `json:"sku"`
-	Brand       string                 `json:"vendor"`
-	Category    string                 `json:"product_type"`
-	Images      []string               `json:"images"`
-	Variants    map[string]interface{} `json:"variants"`
-	Metadata    map[string]interface{} `json:"metafields"`
+	ID          int64              `json:"id"`
+	Title       string             `json:"title"`
+	Description string             `json:"body_html"`
+	Vendor      string             `json:"vendor"`
+	ProductType string             `json:"product_type"`
+	Images      []ShopifyImage     `json:"images"`
+	Variants    []ShopifyVariant   `json:"variants"`
+	Metafields  []ShopifyMetafield `json:"metafields"`
+}
+
+type ShopifyImage struct {
+	ID  int64  `json:"id"`
+	URL string `json:"src"`
+}
+
+type ShopifyVariant struct {
+	ID    int64  `json:"id"`
+	Title string `json:"title"`
+	Price string `json:"price"`
+	SKU   string `json:"sku"`
+}
+
+type ShopifyMetafield struct {
+	ID    int64  `json:"id"`
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 var (
@@ -227,35 +243,35 @@ func fetchShopifyProducts(shopDomain, accessToken string) ([]ShopifyProduct, err
 	// Create HTTP client
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	// Build API URL
-	apiURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", cleanDomain)
+	// Build API URL with proper format
+	apiURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=10", cleanDomain)
 
 	// Create request
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create request: %v", err)
 	}
 
 	// Add headers
 	req.Header.Set("X-Shopify-Access-Token", accessToken)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
 	// Make request
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Check status
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("Shopify API returned status %d", resp.StatusCode)
-	}
-
-	// Read response
+	// Read response body for debugging
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read response: %v", err)
+	}
+
+	// Check status and return detailed error
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Shopify API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse JSON response
@@ -264,7 +280,7 @@ func fetchShopifyProducts(shopDomain, accessToken string) ([]ShopifyProduct, err
 	}
 
 	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse JSON: %v, response: %s", err, string(body))
 	}
 
 	return response.Products, nil
@@ -691,6 +707,27 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Store products in database
 				syncedCount := 0
 				for _, product := range products {
+					// Extract first variant price and SKU
+					var price float64
+					var sku string
+					if len(product.Variants) > 0 {
+						// Convert price string to float
+						if p, err := fmt.Sscanf(product.Variants[0].Price, "%f", &price); err == nil && p == 1 {
+							// Price converted successfully
+						}
+						sku = product.Variants[0].SKU
+					}
+
+					// Extract image URLs
+					var imageURLs []string
+					for _, img := range product.Images {
+						imageURLs = append(imageURLs, img.URL)
+					}
+
+					// Convert variants to JSON
+					variantsJSON, _ := json.Marshal(product.Variants)
+					metafieldsJSON, _ := json.Marshal(product.Metafields)
+
 					_, err := db.Exec(`
 						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status)
 						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
@@ -699,8 +736,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							description = EXCLUDED.description,
 							price = EXCLUDED.price,
 							updated_at = NOW()
-					`, connectorID, product.ID, product.Title, product.Description, product.Price, "USD", product.SKU, product.Brand, product.Category,
-						product.Images, product.Variants, product.Metadata, "ACTIVE")
+					`, connectorID, fmt.Sprintf("%d", product.ID), product.Title, product.Description, price, "USD", sku, product.Vendor, product.ProductType,
+						imageURLs, string(variantsJSON), string(metafieldsJSON), "ACTIVE")
 
 					if err == nil {
 						syncedCount++
