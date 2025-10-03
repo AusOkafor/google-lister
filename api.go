@@ -28,6 +28,20 @@ type Connector struct {
 	LastSync    *time.Time `json:"last_sync"`
 }
 
+// ShopifyProduct represents a product from Shopify API
+type ShopifyProduct struct {
+	ID          string                 `json:"id"`
+	Title       string                 `json:"title"`
+	Description string                 `json:"body_html"`
+	Price       float64                `json:"price"`
+	SKU         string                 `json:"sku"`
+	Brand       string                 `json:"vendor"`
+	Category    string                 `json:"product_type"`
+	Images      []string               `json:"images"`
+	Variants    map[string]interface{} `json:"variants"`
+	Metadata    map[string]interface{} `json:"metafields"`
+}
+
 var (
 	db      *sql.DB
 	dbMutex sync.Mutex
@@ -92,7 +106,8 @@ func initDB() error {
 			metadata JSONB,
 			status VARCHAR(50) DEFAULT 'ACTIVE',
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			UNIQUE(connector_id, external_id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS feed_variants (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -199,6 +214,60 @@ func exchangeCodeForToken(code, shop, clientID, clientSecret string) (string, er
 	}
 
 	return tokenResponse.AccessToken, nil
+}
+
+// fetchShopifyProducts fetches products from Shopify API
+func fetchShopifyProducts(shopDomain, accessToken string) ([]ShopifyProduct, error) {
+	// Clean shop domain
+	cleanDomain := shopDomain
+	if strings.HasSuffix(shopDomain, ".myshopify.com") {
+		cleanDomain = strings.TrimSuffix(shopDomain, ".myshopify.com")
+	}
+
+	// Create HTTP client
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	// Build API URL
+	apiURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", cleanDomain)
+
+	// Create request
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add headers
+	req.Header.Set("X-Shopify-Access-Token", accessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	// Make request
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// Check status
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Shopify API returned status %d", resp.StatusCode)
+	}
+
+	// Read response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse JSON response
+	var response struct {
+		Products []ShopifyProduct `json:"products"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, err
+	}
+
+	return response.Products, nil
 }
 
 // Handler is the main entry point for Vercel
@@ -598,10 +667,54 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			shopify.POST("/:id/sync", func(c *gin.Context) {
 				connectorID := c.Param("id")
 
+				// Get connector from database
+				var connector struct {
+					ID          string
+					ShopDomain  string
+					AccessToken string
+				}
+
+				err := db.QueryRow("SELECT id, shop_domain, access_token FROM connectors WHERE id = $1", connectorID).Scan(
+					&connector.ID, &connector.ShopDomain, &connector.AccessToken)
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Connector not found"})
+					return
+				}
+
+				// Fetch products from Shopify
+				products, err := fetchShopifyProducts(connector.ShopDomain, connector.AccessToken)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products from Shopify"})
+					return
+				}
+
+				// Store products in database
+				syncedCount := 0
+				for _, product := range products {
+					_, err := db.Exec(`
+						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status)
+						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+						ON CONFLICT (connector_id, external_id) DO UPDATE SET
+							title = EXCLUDED.title,
+							description = EXCLUDED.description,
+							price = EXCLUDED.price,
+							updated_at = NOW()
+					`, connectorID, product.ID, product.Title, product.Description, product.Price, "USD", product.SKU, product.Brand, product.Category,
+						product.Images, product.Variants, product.Metadata, "ACTIVE")
+
+					if err == nil {
+						syncedCount++
+					}
+				}
+
+				// Update connector last_sync
+				db.Exec("UPDATE connectors SET last_sync = NOW() WHERE id = $1", connectorID)
+
 				c.JSON(http.StatusOK, gin.H{
-					"message":      "Product sync initiated",
-					"connector_id": connectorID,
-					"note":         "Database integration needed for full sync",
+					"message":         "Product sync completed",
+					"connector_id":    connectorID,
+					"products_synced": syncedCount,
+					"total_products":  len(products),
 				})
 			})
 		}
