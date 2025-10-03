@@ -29,6 +29,9 @@ type Connector struct {
 var (
 	db      *sql.DB
 	dbMutex sync.Mutex
+	// Temporary in-memory storage for Vercel demo
+	connectors     []Connector
+	connectorMutex sync.RWMutex
 )
 
 // initDB initializes the database connection
@@ -220,7 +223,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			mockAccessToken := fmt.Sprintf("mock_token_%d", time.Now().Unix())
 			connectorID := fmt.Sprintf("connector_%d", time.Now().Unix())
 
-			// Save connector to database
+			// Save connector to Supabase database
 			_, err := db.Exec(`
 				INSERT INTO connectors (id, name, type, status, shop_domain, access_token, created_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -277,7 +280,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 		// Connectors
 		api.GET("/connectors", func(c *gin.Context) {
-			// Query connectors from database
+			// Query connectors from Supabase database
 			rows, err := db.Query("SELECT id, name, type, status, shop_domain, created_at, last_sync FROM connectors ORDER BY created_at DESC")
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query connectors"})
@@ -387,7 +390,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				mockAccessToken := fmt.Sprintf("mock_token_%d", time.Now().Unix())
 				connectorID := fmt.Sprintf("connector_%d", time.Now().Unix())
 
-				// Save connector to database
+				// Save connector to Supabase database
 				_, err := db.Exec(`
 					INSERT INTO connectors (id, name, type, status, shop_domain, access_token, created_at)
 					VALUES ($1, $2, $3, $4, $5, $6, $7)
