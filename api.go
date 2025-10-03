@@ -328,13 +328,13 @@ func generateGoogleShoppingXML(products []map[string]interface{}) string {
 // generateFacebookCSV generates CSV feed for Facebook Catalog
 func generateFacebookCSV(products []map[string]interface{}) string {
 	csv := "id,name,description,price,sku,brand,category,image_url,availability,condition,url\n"
-	
+
 	for _, product := range products {
 		imageURL := ""
 		if images, ok := product["image_url"].([]string); ok && len(images) > 0 {
 			imageURL = images[0]
 		}
-		
+
 		csv += fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
 			product["id"],
 			product["name"],
@@ -348,20 +348,20 @@ func generateFacebookCSV(products []map[string]interface{}) string {
 			product["condition"],
 			product["url"])
 	}
-	
+
 	return csv
 }
 
 // generateInstagramCSV generates CSV feed for Instagram Shopping
 func generateInstagramCSV(products []map[string]interface{}) string {
 	csv := "id,name,description,price,sku,brand,category,image_url,availability,condition,url\n"
-	
+
 	for _, product := range products {
 		imageURL := ""
 		if images, ok := product["image_url"].([]string); ok && len(images) > 0 {
 			imageURL = images[0]
 		}
-		
+
 		csv += fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
 			product["id"],
 			product["name"],
@@ -375,7 +375,7 @@ func generateInstagramCSV(products []map[string]interface{}) string {
 			product["condition"],
 			product["url"])
 	}
-	
+
 	return csv
 }
 
@@ -835,13 +835,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Get query parameters
 				format := c.DefaultQuery("format", "xml")
 				limit := c.DefaultQuery("limit", "100")
-				
+
 				// Convert limit to integer
 				limitInt := 100
 				if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
 					// Limit converted successfully
 				}
-				
+
 				// Get products for Google Shopping feed
 				rows, err := db.Query(`
 					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
@@ -856,7 +856,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				defer rows.Close()
-				
+
 				var products []map[string]interface{}
 				for rows.Next() {
 					var id, externalID, title, description, sku, brand, category, status string
@@ -864,13 +864,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var currency string
 					var images string
 					var variants, metadata string
-					
-					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category, 
-									&images, &variants, &metadata, &status)
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+						&images, &variants, &metadata, &status)
 					if err != nil {
 						continue // Skip problematic products
 					}
-					
+
 					// Parse images array
 					var imageList []string
 					if images != "" {
@@ -879,27 +879,27 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							imageList = strings.Split(cleanImages, ",")
 						}
 					}
-					
+
 					// Get first image as main image
 					mainImage := ""
 					if len(imageList) > 0 {
 						mainImage = imageList[0]
 					}
-					
+
 					products = append(products, map[string]interface{}{
-						"id":          externalID,
-						"title":       title,
-						"description": description,
-						"price":       fmt.Sprintf("%.2f %s", price, currency),
-						"sku":         sku,
-						"brand":       brand,
-						"category":    category,
-						"image_link":  mainImage,
+						"id":           externalID,
+						"title":        title,
+						"description":  description,
+						"price":        fmt.Sprintf("%.2f %s", price, currency),
+						"sku":          sku,
+						"brand":        brand,
+						"category":     category,
+						"image_link":   mainImage,
 						"availability": "in stock",
-						"condition":   "new",
+						"condition":    "new",
 					})
 				}
-				
+
 				if format == "xml" {
 					// Generate Google Shopping XML feed
 					xmlContent := generateGoogleShoppingXML(products)
@@ -915,19 +915,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					})
 				}
 			})
-			
+
 			// Facebook Catalog Feed
 			feeds.GET("/facebook-catalog", func(c *gin.Context) {
 				// Get query parameters
 				format := c.DefaultQuery("format", "json")
 				limit := c.DefaultQuery("limit", "100")
-				
+
 				// Convert limit to integer
 				limitInt := 100
 				if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
 					// Limit converted successfully
 				}
-				
+
 				// Get products for Facebook Catalog feed
 				rows, err := db.Query(`
 					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
@@ -942,7 +942,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				defer rows.Close()
-				
+
 				var products []map[string]interface{}
 				for rows.Next() {
 					var id, externalID, title, description, sku, brand, category, status string
@@ -950,13 +950,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var currency string
 					var images string
 					var variants, metadata string
-					
-					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category, 
-									&images, &variants, &metadata, &status)
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+						&images, &variants, &metadata, &status)
 					if err != nil {
 						continue // Skip problematic products
 					}
-					
+
 					// Parse images array
 					var imageList []string
 					if images != "" {
@@ -965,22 +965,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							imageList = strings.Split(cleanImages, ",")
 						}
 					}
-					
+
 					products = append(products, map[string]interface{}{
-						"id":          externalID,
-						"name":        title,
-						"description": description,
-						"price":       fmt.Sprintf("%.2f %s", price, currency),
-						"sku":         sku,
-						"brand":       brand,
-						"category":    category,
-						"image_url":   imageList,
+						"id":           externalID,
+						"name":         title,
+						"description":  description,
+						"price":        fmt.Sprintf("%.2f %s", price, currency),
+						"sku":          sku,
+						"brand":        brand,
+						"category":     category,
+						"image_url":    imageList,
 						"availability": "in stock",
-						"condition":   "new",
-						"url":         fmt.Sprintf("https://austus-themes.myshopify.com/products/%s", externalID),
+						"condition":    "new",
+						"url":          fmt.Sprintf("https://austus-themes.myshopify.com/products/%s", externalID),
 					})
 				}
-				
+
 				if format == "csv" {
 					// Generate CSV feed
 					csvContent := generateFacebookCSV(products)
@@ -997,19 +997,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					})
 				}
 			})
-			
+
 			// Instagram Shopping Feed
 			feeds.GET("/instagram-shopping", func(c *gin.Context) {
 				// Get query parameters
 				format := c.DefaultQuery("format", "json")
 				limit := c.DefaultQuery("limit", "100")
-				
+
 				// Convert limit to integer
 				limitInt := 100
 				if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
 					// Limit converted successfully
 				}
-				
+
 				// Get products for Instagram Shopping feed
 				rows, err := db.Query(`
 					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
@@ -1024,7 +1024,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				defer rows.Close()
-				
+
 				var products []map[string]interface{}
 				for rows.Next() {
 					var id, externalID, title, description, sku, brand, category, status string
@@ -1032,13 +1032,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var currency string
 					var images string
 					var variants, metadata string
-					
-					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category, 
-									&images, &variants, &metadata, &status)
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+						&images, &variants, &metadata, &status)
 					if err != nil {
 						continue // Skip problematic products
 					}
-					
+
 					// Parse images array
 					var imageList []string
 					if images != "" {
@@ -1047,22 +1047,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							imageList = strings.Split(cleanImages, ",")
 						}
 					}
-					
+
 					products = append(products, map[string]interface{}{
-						"id":          externalID,
-						"name":        title,
-						"description": description,
-						"price":       fmt.Sprintf("%.2f %s", price, currency),
-						"sku":         sku,
-						"brand":       brand,
-						"category":    category,
-						"image_url":   imageList,
+						"id":           externalID,
+						"name":         title,
+						"description":  description,
+						"price":        fmt.Sprintf("%.2f %s", price, currency),
+						"sku":          sku,
+						"brand":        brand,
+						"category":     category,
+						"image_url":    imageList,
 						"availability": "in stock",
-						"condition":   "new",
-						"url":         fmt.Sprintf("https://austus-themes.myshopify.com/products/%s", externalID),
+						"condition":    "new",
+						"url":          fmt.Sprintf("https://austus-themes.myshopify.com/products/%s", externalID),
 					})
 				}
-				
+
 				if format == "csv" {
 					// Generate CSV feed
 					csvContent := generateInstagramCSV(products)
@@ -1079,28 +1079,28 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					})
 				}
 			})
-			
+
 			// Feed Statistics
 			feeds.GET("/stats", func(c *gin.Context) {
 				var stats struct {
-					TotalProducts     int `json:"total_products"`
-					ActiveProducts   int `json:"active_products"`
+					TotalProducts      int `json:"total_products"`
+					ActiveProducts     int `json:"active_products"`
 					ProductsWithImages int `json:"products_with_images"`
 					ProductsWithPrice  int `json:"products_with_price"`
 				}
-				
+
 				// Get total products
 				db.QueryRow("SELECT COUNT(*) FROM products").Scan(&stats.TotalProducts)
-				
+
 				// Get active products
 				db.QueryRow("SELECT COUNT(*) FROM products WHERE status = 'ACTIVE'").Scan(&stats.ActiveProducts)
-				
+
 				// Get products with images
-				db.QueryRow("SELECT COUNT(*) FROM products WHERE images IS NOT NULL AND images != ''").Scan(&stats.ProductsWithImages)
-				
+				db.QueryRow("SELECT COUNT(*) FROM products WHERE images IS NOT NULL AND array_length(images, 1) > 0").Scan(&stats.ProductsWithImages)
+
 				// Get products with price
 				db.QueryRow("SELECT COUNT(*) FROM products WHERE price > 0").Scan(&stats.ProductsWithPrice)
-				
+
 				c.JSON(http.StatusOK, gin.H{
 					"data":    stats,
 					"message": "Feed statistics retrieved successfully",
