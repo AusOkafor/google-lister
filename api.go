@@ -2000,7 +2000,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 	// Add CORS middleware
 	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{"*"}
+	config.AllowAllOrigins = true
 	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	config.AllowHeaders = []string{"Content-Type", "Authorization", "X-Shopify-Topic", "X-Shopify-Shop-Domain", "X-Shopify-Hmac-Sha256"}
 	config.AllowCredentials = false
