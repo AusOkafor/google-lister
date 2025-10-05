@@ -2820,7 +2820,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var price float64
 					var currency string
 					var images string
-					var variants, metadata string
+					var variants, metadata sql.NullString
 
 					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status)
@@ -2906,7 +2906,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var price float64
 					var currency string
 					var images string
-					var variants, metadata string
+					var variants, metadata sql.NullString
 
 					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status)
@@ -2988,7 +2988,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var price float64
 					var currency string
 					var images string
-					var variants, metadata string
+					var variants, metadata sql.NullString
 
 					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status)
@@ -3136,7 +3136,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var price float64
 					var currency string
 					var images string
-					var variants, metadata string
+					var variants, metadata sql.NullString
 					var createdAt, updatedAt time.Time
 
 					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
@@ -3245,7 +3245,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var price float64
 					var currency string
 					var images string
-					var variants, metadata string
+					var variants, metadata sql.NullString
 					var createdAt, updatedAt time.Time
 
 					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
@@ -3327,7 +3327,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var price float64
 					var currency string
 					var images string
-					var variants, metadata string
+					var variants, metadata sql.NullString
 					var createdAt, updatedAt time.Time
 
 					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
@@ -3418,7 +3418,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var price float64
 					var currency string
 					var images string
-					var variants, metadata string
+					var variants, metadata sql.NullString
 
 					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status)
