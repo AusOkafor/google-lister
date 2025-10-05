@@ -2564,7 +2564,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var products []map[string]interface{}
 				for rows.Next() {
-					var id, externalID, title, description, sku, brand, category, status string
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
 					var price sql.NullFloat64 // Use sql.NullFloat64 for price
 					var currency string
 					var images, variants, metadata sql.NullString // Use sql.NullString to handle NULL values
@@ -2594,7 +2595,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"description": description,
 						"price":       getFloatValue(price),
 						"currency":    currency,
-						"sku":         sku,
+						"sku":         getStringValue(sku),
 						"brand":       brand,
 						"category":    category,
 						"images":      imageList,
@@ -2627,7 +2628,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			products.GET("/:id", func(c *gin.Context) {
 				productID := c.Param("id")
 
-				var id, externalID, title, description, sku, brand, category, status string
+				var id, externalID, title, description, brand, category, status string
+				var sku sql.NullString
 				var price sql.NullFloat64 // Use sql.NullFloat64 for price
 				var currency string
 				var images, variants, metadata sql.NullString // Use sql.NullString to handle NULL values
@@ -2664,7 +2666,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"description": description,
 						"price":       getFloatValue(price),
 						"currency":    currency,
-						"sku":         sku,
+						"sku":         getStringValue(sku),
 						"brand":       brand,
 						"category":    category,
 						"images":      imageList,
@@ -2824,7 +2826,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var products []map[string]interface{}
 				for rows.Next() {
-					var id, externalID, title, description, sku, brand, category, status string
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
 					var price sql.NullFloat64
 					var currency string
 					var images string
@@ -2910,7 +2913,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var products []map[string]interface{}
 				for rows.Next() {
-					var id, externalID, title, description, sku, brand, category, status string
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
 					var price sql.NullFloat64
 					var currency string
 					var images string
@@ -2992,7 +2996,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var products []map[string]interface{}
 				for rows.Next() {
-					var id, externalID, title, description, sku, brand, category, status string
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
 					var price sql.NullFloat64
 					var currency string
 					var images string
@@ -3140,7 +3145,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var products []map[string]interface{}
 				for rows.Next() {
-					var id, externalID, title, description, sku, brand, category, status string
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
 					var price sql.NullFloat64
 					var currency string
 					var images string
@@ -3169,7 +3175,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"description": strings.ReplaceAll(strings.ReplaceAll(description, "<p>", ""), "</p>", ""),
 						"price":       getFloatValue(price),
 						"currency":    currency,
-						"sku":         sku,
+						"sku":         getStringValue(sku),
 						"brand":       brand,
 						"category":    category,
 						"images":      strings.Join(imageList, "; "),
@@ -3249,7 +3255,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var products []map[string]interface{}
 				for rows.Next() {
-					var id, externalID, title, description, sku, brand, category, status string
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
 					var price sql.NullFloat64
 					var currency string
 					var images string
@@ -3278,7 +3285,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"description": description,
 						"price":       getFloatValue(price),
 						"currency":    currency,
-						"sku":         sku,
+						"sku":         getStringValue(sku),
 						"brand":       brand,
 						"category":    category,
 						"images":      imageList,
@@ -3331,7 +3338,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var products []map[string]interface{}
 				for rows.Next() {
-					var id, externalID, title, description, sku, brand, category, status string
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
 					var price sql.NullFloat64
 					var currency string
 					var images string
@@ -3360,7 +3368,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"description": description,
 						"price":       getFloatValue(price),
 						"currency":    currency,
-						"sku":         sku,
+						"sku":         getStringValue(sku),
 						"brand":       brand,
 						"category":    category,
 						"images":      imageList,
@@ -3422,7 +3430,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var products []map[string]interface{}
 				for rows.Next() {
-					var id, externalID, title, description, sku, brand, category, status string
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
 					var price sql.NullFloat64
 					var currency string
 					var images string
@@ -3450,7 +3459,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"description": description,
 						"price":       getFloatValue(price),
 						"currency":    currency,
-						"sku":         sku,
+						"sku":         getStringValue(sku),
 						"brand":       brand,
 						"category":    category,
 						"images":      imageList,
@@ -3984,13 +3993,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				for _, product := range products {
 					// Extract first variant price and SKU
 					var price sql.NullFloat64
-					var sku string
+					var sku sql.NullString
 					if len(product.Variants) > 0 {
 						// Convert price string to float
 						if p, err := fmt.Sscanf(product.Variants[0].Price, "%f", &price); err == nil && p == 1 {
 							// Price converted successfully
 						}
-						sku = product.Variants[0].SKU
+						if product.Variants[0].SKU != "" {
+							sku = sql.NullString{String: product.Variants[0].SKU, Valid: true}
+						}
 					}
 
 					// Extract image URLs and convert to PostgreSQL array format
