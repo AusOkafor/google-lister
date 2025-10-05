@@ -9,6 +9,7 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
+	github.com/rs/cors v1.10.1
 	github.com/segmentio/kafka-go v0.4.42
 	gorm.io/driver/postgres v1.5.2
 	gorm.io/driver/sqlite v1.6.0

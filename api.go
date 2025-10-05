@@ -18,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+	"github.com/rs/cors"
 )
 
 // In-memory storage for connectors (for demo purposes)
@@ -1997,18 +1998,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
 
-	// Add CORS middleware - manual approach for better compatibility
+	// Add proper CORS middleware using rs/cors
+	corsConfig := cors.New(cors.Options{
+		AllowedOrigins:   []string{"*"}, // Allow all origins for now
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization", "X-Shopify-Topic", "X-Shopify-Shop-Domain", "X-Shopify-Hmac-Sha256"},
+		ExposedHeaders:   []string{},
+		AllowCredentials: false, // Must be false when using "*" for origins
+		Debug:            false,
+	})
+
+	// Apply CORS middleware to all routes using rs/cors
 	router.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Shopify-Topic, X-Shopify-Shop-Domain, X-Shopify-Hmac-Sha256")
-		c.Header("Access-Control-Max-Age", "86400")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
+		corsConfig.HandlerFunc(c.Writer, c.Request)
 		c.Next()
 	})
 
@@ -2504,7 +2506,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 				c.AbortWithStatus(204)
 			})
-			
+
 			products.OPTIONS("/:id", func(c *gin.Context) {
 				c.Header("Access-Control-Allow-Origin", "*")
 				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -2517,7 +2519,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				c.Header("Access-Control-Allow-Origin", "*")
 				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-				
+
 				// Get query parameters
 				page := c.DefaultQuery("page", "1")
 				limit := c.DefaultQuery("limit", "20")
@@ -2650,7 +2652,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				c.Header("Access-Control-Allow-Origin", "*")
 				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-				
+
 				productID := c.Param("id")
 
 				var id, externalID, title, description, brand, category, status string
