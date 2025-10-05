@@ -304,6 +304,14 @@ func fetchShopifyProducts(shopDomain, accessToken string) ([]ShopifyProduct, err
 	return response.Products, nil
 }
 
+// getStringValue safely extracts string value from sql.NullString
+func getStringValue(ns sql.NullString) string {
+	if ns.Valid {
+		return ns.String
+	}
+	return ""
+}
+
 // generateGoogleShoppingXML generates XML feed for Google Shopping
 func generateGoogleShoppingXML(products []map[string]interface{}) string {
 	xml := `<?xml version="1.0" encoding="UTF-8"?>
@@ -918,7 +926,7 @@ func optimizeProductImages(title, description, brand, category string, images []
 
 	// Suggest image types based on product category
 	text := strings.ToLower(title + " " + description + " " + category)
-	
+
 	if strings.Contains(text, "clothing") || strings.Contains(text, "shirt") || strings.Contains(text, "dress") || strings.Contains(text, "jacket") {
 		suggestions = append(suggestions, map[string]interface{}{
 			"type":           "image_variety_fashion",
@@ -1631,8 +1639,8 @@ func processInventoryUpdate(inventoryData struct {
 		DO UPDATE SET 
 			available_quantity = EXCLUDED.available_quantity,
 			last_updated = EXCLUDED.last_updated
-	`, productID, connectorID, fmt.Sprintf("%d", inventoryData.InventoryItemID), 
-	   fmt.Sprintf("%d", inventoryData.LocationID), inventoryData.Available)
+	`, productID, connectorID, fmt.Sprintf("%d", inventoryData.InventoryItemID),
+		fmt.Sprintf("%d", inventoryData.LocationID), inventoryData.Available)
 
 	if err != nil {
 		result["status"] = "error"
@@ -1646,11 +1654,11 @@ func processInventoryUpdate(inventoryData struct {
 	}
 
 	result["details"] = map[string]interface{}{
-		"product_id": productID,
-		"connector_id": connectorID,
-		"inventory_item_id": inventoryData.InventoryItemID,
-		"available": inventoryData.Available,
-		"location_id": inventoryData.LocationID,
+		"product_id":         productID,
+		"connector_id":       connectorID,
+		"inventory_item_id":  inventoryData.InventoryItemID,
+		"available":          inventoryData.Available,
+		"location_id":        inventoryData.LocationID,
 		"stored_in_database": true,
 	}
 
@@ -2551,22 +2559,21 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var id, externalID, title, description, sku, brand, category, status string
 					var price float64
 					var currency string
-					var images string // Changed to string to handle PostgreSQL array
-					var variants, metadata string
+					var images, variants, metadata sql.NullString // Use sql.NullString to handle NULL values
 					var createdAt, updatedAt time.Time
 
 					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status, &createdAt, &updatedAt)
 					if err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan product"})
+						c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to scan product: %v", err)})
 						return
 					}
 
 					// Parse images array from PostgreSQL format
 					var imageList []string
-					if images != "" {
+					if images.Valid && images.String != "" {
 						// Remove curly braces and split by comma
-						cleanImages := strings.Trim(images, "{}")
+						cleanImages := strings.Trim(images.String, "{}")
 						if cleanImages != "" {
 							imageList = strings.Split(cleanImages, ",")
 						}
@@ -2583,8 +2590,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"brand":       brand,
 						"category":    category,
 						"images":      imageList,
-						"variants":    variants,
-						"metadata":    metadata,
+						"variants":    getStringValue(variants),
+						"metadata":    getStringValue(metadata),
 						"status":      status,
 						"created_at":  createdAt,
 						"updated_at":  updatedAt,
@@ -2615,8 +2622,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				var id, externalID, title, description, sku, brand, category, status string
 				var price float64
 				var currency string
-				var images string // Changed to string to handle PostgreSQL array
-				var variants, metadata string
+				var images, variants, metadata sql.NullString // Use sql.NullString to handle NULL values
 				var createdAt, updatedAt time.Time
 
 				err := db.QueryRow(`
@@ -2634,9 +2640,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Parse images array from PostgreSQL format
 				var imageList []string
-				if images != "" {
+				if images.Valid && images.String != "" {
 					// Remove curly braces and split by comma
-					cleanImages := strings.Trim(images, "{}")
+					cleanImages := strings.Trim(images.String, "{}")
 					if cleanImages != "" {
 						imageList = strings.Split(cleanImages, ",")
 					}
@@ -2654,8 +2660,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"brand":       brand,
 						"category":    category,
 						"images":      imageList,
-						"variants":    variants,
-						"metadata":    metadata,
+						"variants":    getStringValue(variants),
+						"metadata":    getStringValue(metadata),
 						"status":      status,
 						"created_at":  createdAt,
 						"updated_at":  updatedAt,
@@ -2702,7 +2708,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Get inventory levels for a product
 			products.GET("/:id/inventory", func(c *gin.Context) {
 				productID := c.Param("id")
-				
+
 				rows, err := db.Query(`
 					SELECT il.inventory_item_id, il.location_id, il.available_quantity, 
 						   il.committed_quantity, il.on_hand_quantity, il.last_updated
@@ -2715,37 +2721,37 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				defer rows.Close()
-				
+
 				var inventoryLevels []map[string]interface{}
 				for rows.Next() {
 					var inventoryItemID, locationID string
 					var availableQuantity, committedQuantity, onHandQuantity int
 					var lastUpdated time.Time
-					
-					err := rows.Scan(&inventoryItemID, &locationID, &availableQuantity, 
-									&committedQuantity, &onHandQuantity, &lastUpdated)
+
+					err := rows.Scan(&inventoryItemID, &locationID, &availableQuantity,
+						&committedQuantity, &onHandQuantity, &lastUpdated)
 					if err != nil {
 						continue
 					}
-					
+
 					inventoryLevels = append(inventoryLevels, map[string]interface{}{
-						"inventory_item_id": inventoryItemID,
-						"location_id": locationID,
+						"inventory_item_id":  inventoryItemID,
+						"location_id":        locationID,
 						"available_quantity": availableQuantity,
 						"committed_quantity": committedQuantity,
-						"on_hand_quantity": onHandQuantity,
-						"last_updated": lastUpdated,
+						"on_hand_quantity":   onHandQuantity,
+						"last_updated":       lastUpdated,
 					})
 				}
-				
+
 				c.JSON(http.StatusOK, gin.H{
-					"product_id": productID,
+					"product_id":       productID,
 					"inventory_levels": inventoryLevels,
-					"total_locations": len(inventoryLevels),
-					"message": "Inventory levels retrieved successfully",
+					"total_locations":  len(inventoryLevels),
+					"message":          "Inventory levels retrieved successfully",
 				})
 			})
-			
+
 			// Get product statistics
 			products.GET("/stats", func(c *gin.Context) {
 				var stats struct {
@@ -3159,8 +3165,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"brand":       brand,
 						"category":    category,
 						"images":      strings.Join(imageList, "; "),
-						"variants":    variants,
-						"metadata":    metadata,
+						"variants":    getStringValue(variants),
+						"metadata":    getStringValue(metadata),
 						"status":      status,
 						"created_at":  createdAt.Format("2006-01-02 15:04:05"),
 						"updated_at":  updatedAt.Format("2006-01-02 15:04:05"),
@@ -3268,8 +3274,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"brand":       brand,
 						"category":    category,
 						"images":      imageList,
-						"variants":    variants,
-						"metadata":    metadata,
+						"variants":    getStringValue(variants),
+						"metadata":    getStringValue(metadata),
 						"status":      status,
 						"created_at":  createdAt,
 						"updated_at":  updatedAt,
@@ -3350,8 +3356,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"brand":       brand,
 						"category":    category,
 						"images":      imageList,
-						"variants":    variants,
-						"metadata":    metadata,
+						"variants":    getStringValue(variants),
+						"metadata":    getStringValue(metadata),
 						"status":      status,
 						"created_at":  createdAt,
 						"updated_at":  updatedAt,
@@ -3440,8 +3446,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"brand":       brand,
 						"category":    category,
 						"images":      imageList,
-						"variants":    variants,
-						"metadata":    metadata,
+						"variants":    getStringValue(variants),
+						"metadata":    getStringValue(metadata),
 						"status":      status,
 					})
 				}
