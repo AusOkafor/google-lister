@@ -312,6 +312,14 @@ func getStringValue(ns sql.NullString) string {
 	return ""
 }
 
+// getFloatValue safely extracts float value from sql.NullFloat64
+func getFloatValue(nf sql.NullFloat64) float64 {
+	if nf.Valid {
+		return nf.Float64
+	}
+	return 0.0
+}
+
 // generateGoogleShoppingXML generates XML feed for Google Shopping
 func generateGoogleShoppingXML(products []map[string]interface{}) string {
 	xml := `<?xml version="1.0" encoding="UTF-8"?>
@@ -1458,7 +1466,7 @@ func processProductUpdate(product ShopifyProduct, shopDomain, topic string) map[
 	`,
 		transformedProduct.Title,
 		transformedProduct.Description,
-		transformedProduct.Price,
+		getFloatValue(transformedProduct.Price),
 		transformedProduct.Currency,
 		transformedProduct.Brand,
 		transformedProduct.Category,
@@ -1478,7 +1486,7 @@ func processProductUpdate(product ShopifyProduct, shopDomain, topic string) map[
 	result["message"] = "Product updated successfully"
 	result["details"] = map[string]interface{}{
 		"title":        transformedProduct.Title,
-		"price":        transformedProduct.Price,
+		"price":        getFloatValue(transformedProduct.Price),
 		"images_count": len(transformedProduct.Images),
 	}
 
@@ -1520,7 +1528,7 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 		transformedProduct.ExternalID,
 		transformedProduct.Title,
 		transformedProduct.Description,
-		transformedProduct.Price,
+		getFloatValue(transformedProduct.Price),
 		transformedProduct.Currency,
 		transformedProduct.Brand,
 		transformedProduct.Category,
@@ -1539,7 +1547,7 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 	result["message"] = "Product created successfully"
 	result["details"] = map[string]interface{}{
 		"title":        transformedProduct.Title,
-		"price":        transformedProduct.Price,
+		"price":        getFloatValue(transformedProduct.Price),
 		"images_count": len(transformedProduct.Images),
 	}
 
@@ -1918,7 +1926,7 @@ func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string) s
 	ExternalID  string
 	Title       string
 	Description string
-	Price       float64
+	Price       sql.NullFloat64
 	Currency    string
 	Brand       string
 	Category    string
@@ -1939,10 +1947,10 @@ func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string) s
 	metafieldsJSON, _ := json.Marshal(shopifyProduct.Metafields)
 
 	// Calculate price from first variant
-	var price float64
+	var price sql.NullFloat64
 	if len(shopifyProduct.Variants) > 0 {
 		if p, err := strconv.ParseFloat(shopifyProduct.Variants[0].Price, 64); err == nil {
-			price = p
+			price = sql.NullFloat64{Float64: p, Valid: true}
 		}
 	}
 
@@ -1950,7 +1958,7 @@ func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string) s
 		ExternalID  string
 		Title       string
 		Description string
-		Price       float64
+		Price       sql.NullFloat64
 		Currency    string
 		Brand       string
 		Category    string
@@ -2557,7 +2565,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				var products []map[string]interface{}
 				for rows.Next() {
 					var id, externalID, title, description, sku, brand, category, status string
-					var price float64
+					var price sql.NullFloat64 // Use sql.NullFloat64 for price
 					var currency string
 					var images, variants, metadata sql.NullString // Use sql.NullString to handle NULL values
 					var createdAt, updatedAt time.Time
@@ -2584,7 +2592,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"external_id": externalID,
 						"title":       title,
 						"description": description,
-						"price":       price,
+						"price":       getFloatValue(price),
 						"currency":    currency,
 						"sku":         sku,
 						"brand":       brand,
@@ -2620,7 +2628,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				productID := c.Param("id")
 
 				var id, externalID, title, description, sku, brand, category, status string
-				var price float64
+				var price sql.NullFloat64 // Use sql.NullFloat64 for price
 				var currency string
 				var images, variants, metadata sql.NullString // Use sql.NullString to handle NULL values
 				var createdAt, updatedAt time.Time
@@ -2654,7 +2662,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"external_id": externalID,
 						"title":       title,
 						"description": description,
-						"price":       price,
+						"price":       getFloatValue(price),
 						"currency":    currency,
 						"sku":         sku,
 						"brand":       brand,
@@ -2817,7 +2825,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				var products []map[string]interface{}
 				for rows.Next() {
 					var id, externalID, title, description, sku, brand, category, status string
-					var price float64
+					var price sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
@@ -2903,7 +2911,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				var products []map[string]interface{}
 				for rows.Next() {
 					var id, externalID, title, description, sku, brand, category, status string
-					var price float64
+					var price sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
@@ -2985,7 +2993,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				var products []map[string]interface{}
 				for rows.Next() {
 					var id, externalID, title, description, sku, brand, category, status string
-					var price float64
+					var price sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
@@ -3133,7 +3141,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				var products []map[string]interface{}
 				for rows.Next() {
 					var id, externalID, title, description, sku, brand, category, status string
-					var price float64
+					var price sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
@@ -3159,7 +3167,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"external_id": externalID,
 						"title":       title,
 						"description": strings.ReplaceAll(strings.ReplaceAll(description, "<p>", ""), "</p>", ""),
-						"price":       price,
+						"price":       getFloatValue(price),
 						"currency":    currency,
 						"sku":         sku,
 						"brand":       brand,
@@ -3242,7 +3250,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				var products []map[string]interface{}
 				for rows.Next() {
 					var id, externalID, title, description, sku, brand, category, status string
-					var price float64
+					var price sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
@@ -3268,7 +3276,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"external_id": externalID,
 						"title":       title,
 						"description": description,
-						"price":       price,
+						"price":       getFloatValue(price),
 						"currency":    currency,
 						"sku":         sku,
 						"brand":       brand,
@@ -3324,7 +3332,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				var products []map[string]interface{}
 				for rows.Next() {
 					var id, externalID, title, description, sku, brand, category, status string
-					var price float64
+					var price sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
@@ -3350,7 +3358,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"external_id": externalID,
 						"title":       title,
 						"description": description,
-						"price":       price,
+						"price":       getFloatValue(price),
 						"currency":    currency,
 						"sku":         sku,
 						"brand":       brand,
@@ -3415,7 +3423,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				var products []map[string]interface{}
 				for rows.Next() {
 					var id, externalID, title, description, sku, brand, category, status string
-					var price float64
+					var price sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
@@ -3440,7 +3448,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"external_id": externalID,
 						"title":       title,
 						"description": description,
-						"price":       price,
+						"price":       getFloatValue(price),
 						"currency":    currency,
 						"sku":         sku,
 						"brand":       brand,
@@ -3548,7 +3556,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Get product details
 				var title, description, brand, category string
-				var price float64
+				var price sql.NullFloat64
 				err := db.QueryRow(`
 					SELECT title, description, brand, category, price 
 					FROM products 
@@ -3561,7 +3569,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// AI-powered description enhancement
-				enhancedDescription := enhanceProductDescription(title, description, brand, category, price, request.Style, request.Length)
+				enhancedDescription := enhanceProductDescription(title, description, brand, category, getFloatValue(price), request.Style, request.Length)
 
 				c.JSON(http.StatusOK, gin.H{
 					"product_id":           request.ProductID,
@@ -3975,7 +3983,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				for _, product := range products {
 					// Extract first variant price and SKU
-					var price float64
+					var price sql.NullFloat64
 					var sku string
 					if len(product.Variants) > 0 {
 						// Convert price string to float
