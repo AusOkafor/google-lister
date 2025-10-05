@@ -2497,8 +2497,27 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		// Products Management
 		products := api.Group("/products")
 		{
+			// Handle OPTIONS requests for CORS preflight
+			products.OPTIONS("/", func(c *gin.Context) {
+				c.Header("Access-Control-Allow-Origin", "*")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				c.AbortWithStatus(204)
+			})
+			
+			products.OPTIONS("/:id", func(c *gin.Context) {
+				c.Header("Access-Control-Allow-Origin", "*")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				c.AbortWithStatus(204)
+			})
 			// List all products with pagination and filtering
 			products.GET("/", func(c *gin.Context) {
+				// Add CORS headers directly to this endpoint
+				c.Header("Access-Control-Allow-Origin", "*")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				
 				// Get query parameters
 				page := c.DefaultQuery("page", "1")
 				limit := c.DefaultQuery("limit", "20")
@@ -2627,6 +2646,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 			// Get single product by ID
 			products.GET("/:id", func(c *gin.Context) {
+				// Add CORS headers directly to this endpoint
+				c.Header("Access-Control-Allow-Origin", "*")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+				
 				productID := c.Param("id")
 
 				var id, externalID, title, description, brand, category, status string
