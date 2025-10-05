@@ -8,6 +8,23 @@
         "src": "/(.*)",
         "dest": "api.go"
     }],
+    "headers": [{
+        "source": "/api/(.*)",
+        "headers": [
+            {
+                "key": "Access-Control-Allow-Origin",
+                "value": "*"
+            },
+            {
+                "key": "Access-Control-Allow-Methods",
+                "value": "GET, POST, PUT, DELETE, OPTIONS"
+            },
+            {
+                "key": "Access-Control-Allow-Headers",
+                "value": "Content-Type, Authorization, X-Shopify-Topic, X-Shopify-Shop-Domain, X-Shopify-Hmac-Sha256"
+            }
+        ]
+    }],
     "env": {
         "GO_VERSION": "1.21"
     }
