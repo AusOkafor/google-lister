@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 )
@@ -1998,18 +1999,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	router.Use(gin.Recovery())
 
 	// Add CORS middleware
-	router.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Shopify-Topic, X-Shopify-Shop-Domain, X-Shopify-Hmac-Sha256")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
-	})
+	config := cors.DefaultConfig()
+	config.AllowOrigins = []string{"*"}
+	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	config.AllowHeaders = []string{"Content-Type", "Authorization", "X-Shopify-Topic", "X-Shopify-Shop-Domain", "X-Shopify-Hmac-Sha256"}
+	config.AllowCredentials = false
+	router.Use(cors.New(config))
 
 	// Health check endpoint
 	router.GET("/", func(c *gin.Context) {
