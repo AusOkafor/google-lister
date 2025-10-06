@@ -4144,8 +4144,323 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
-		// Connectors
-		api.GET("/connectors", func(c *gin.Context) {
+		// Create new product
+		products.POST("/", func(c *gin.Context) {
+			// Add CORS headers
+			c.Header("Access-Control-Allow-Origin", "*")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+			var productData map[string]interface{}
+			if err := c.ShouldBindJSON(&productData); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			// Extract and validate required fields
+			title, ok := productData["title"].(string)
+			if !ok || title == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
+				return
+			}
+
+			price, ok := productData["price"].(float64)
+			if !ok {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "price is required and must be a number"})
+				return
+			}
+
+			// Generate SKU and external_id if not provided
+			sku, ok := productData["sku"].(string)
+			if !ok || sku == "" {
+				sku = "SKU-" + strconv.FormatInt(time.Now().Unix(), 10)
+			}
+
+			externalID, ok := productData["external_id"].(string)
+			if !ok || externalID == "" {
+				externalID = "EXT-" + strconv.FormatInt(time.Now().Unix(), 10)
+			}
+
+			// Prepare data for insertion
+			currency := "USD"
+			if c, ok := productData["currency"].(string); ok && c != "" {
+				currency = c
+			}
+
+			availability := "IN_STOCK"
+			if a, ok := productData["availability"].(string); ok && a != "" {
+				availability = a
+			}
+
+			// Handle optional fields
+			var description, brand, gtin, mpn, category, taxClass *string
+			if d, ok := productData["description"].(string); ok && d != "" {
+				description = &d
+			}
+			if b, ok := productData["brand"].(string); ok && b != "" {
+				brand = &b
+			}
+			if g, ok := productData["gtin"].(string); ok && g != "" {
+				gtin = &g
+			}
+			if m, ok := productData["mpn"].(string); ok && m != "" {
+				mpn = &m
+			}
+			if cat, ok := productData["category"].(string); ok && cat != "" {
+				category = &cat
+			}
+			if tc, ok := productData["tax_class"].(string); ok && tc != "" {
+				taxClass = &tc
+			}
+
+			// Handle JSON fields
+			var imagesJSON, variantsJSON, shippingJSON, customLabelsJSON, metadataJSON string
+
+			if imgs, ok := productData["images"].([]interface{}); ok && len(imgs) > 0 {
+				imgStrs := make([]string, len(imgs))
+				for i, img := range imgs {
+					if imgStr, ok := img.(string); ok {
+						imgStrs[i] = imgStr
+					}
+				}
+				imagesJSON = "{" + strings.Join(imgStrs, ",") + "}"
+			}
+
+			if vars, ok := productData["variants"].([]interface{}); ok && len(vars) > 0 {
+				if variantsBytes, err := json.Marshal(vars); err == nil {
+					variantsJSON = string(variantsBytes)
+				}
+			}
+
+			if ship, ok := productData["shipping"]; ok && ship != nil {
+				if shippingBytes, err := json.Marshal(ship); err == nil {
+					shippingJSON = string(shippingBytes)
+				}
+			}
+
+			if labels, ok := productData["custom_labels"].([]interface{}); ok && len(labels) > 0 {
+				labelStrs := make([]string, len(labels))
+				for i, label := range labels {
+					if labelStr, ok := label.(string); ok {
+						labelStrs[i] = labelStr
+					}
+				}
+				customLabelsJSON = "{" + strings.Join(labelStrs, ",") + "}"
+			}
+
+			if meta, ok := productData["metadata"]; ok && meta != nil {
+				if metadataBytes, err := json.Marshal(meta); err == nil {
+					metadataJSON = string(metadataBytes)
+				}
+			}
+
+			// Insert product into database
+			query := `INSERT INTO products (external_id, sku, title, description, brand, gtin, mpn, category, price, currency, availability, images, variants, shipping, tax_class, custom_labels, metadata, created_at, updated_at) 
+					  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW()) 
+					  RETURNING id`
+
+			var productID string
+			err := db.QueryRow(query, externalID, sku, title, description, brand, gtin, mpn, category, price, currency, availability, imagesJSON, variantsJSON, shippingJSON, taxClass, customLabelsJSON, metadataJSON).Scan(&productID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product: " + err.Error()})
+				return
+			}
+
+			// Return created product
+			product := map[string]interface{}{
+				"id":           productID,
+				"external_id":  externalID,
+				"sku":          sku,
+				"title":        title,
+				"price":        price,
+				"currency":     currency,
+				"availability": availability,
+				"created_at":   time.Now().Format(time.RFC3339),
+				"updated_at":   time.Now().Format(time.RFC3339),
+			}
+
+			if description != nil {
+				product["description"] = *description
+			}
+			if brand != nil {
+				product["brand"] = *brand
+			}
+			if gtin != nil {
+				product["gtin"] = *gtin
+			}
+			if mpn != nil {
+				product["mpn"] = *mpn
+			}
+			if category != nil {
+				product["category"] = *category
+			}
+			if taxClass != nil {
+				product["tax_class"] = *taxClass
+			}
+			if imagesJSON != "" {
+				product["images"] = imagesJSON
+			}
+			if variantsJSON != "" {
+				product["variants"] = variantsJSON
+			}
+			if shippingJSON != "" {
+				product["shipping"] = shippingJSON
+			}
+			if customLabelsJSON != "" {
+				product["custom_labels"] = customLabelsJSON
+			}
+			if metadataJSON != "" {
+				product["metadata"] = metadataJSON
+			}
+
+			c.JSON(http.StatusCreated, gin.H{"data": product})
+		})
+
+		// Update existing product
+		products.PUT("/:id", func(c *gin.Context) {
+			// Add CORS headers
+			c.Header("Access-Control-Allow-Origin", "*")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+			id := c.Param("id")
+
+			var productData map[string]interface{}
+			if err := c.ShouldBindJSON(&productData); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			// Check if product exists
+			var exists bool
+			err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM products WHERE id = $1)", id).Scan(&exists)
+			if err != nil || !exists {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+				return
+			}
+
+			// Build update query dynamically
+			setParts := []string{}
+			args := []interface{}{}
+			argIndex := 1
+
+			// Handle each field
+			if title, ok := productData["title"].(string); ok {
+				setParts = append(setParts, "title = $"+strconv.Itoa(argIndex))
+				args = append(args, title)
+				argIndex++
+			}
+			if description, ok := productData["description"].(string); ok {
+				setParts = append(setParts, "description = $"+strconv.Itoa(argIndex))
+				args = append(args, description)
+				argIndex++
+			}
+			if brand, ok := productData["brand"].(string); ok {
+				setParts = append(setParts, "brand = $"+strconv.Itoa(argIndex))
+				args = append(args, brand)
+				argIndex++
+			}
+			if category, ok := productData["category"].(string); ok {
+				setParts = append(setParts, "category = $"+strconv.Itoa(argIndex))
+				args = append(args, category)
+				argIndex++
+			}
+			if price, ok := productData["price"].(float64); ok {
+				setParts = append(setParts, "price = $"+strconv.Itoa(argIndex))
+				args = append(args, price)
+				argIndex++
+			}
+			if currency, ok := productData["currency"].(string); ok {
+				setParts = append(setParts, "currency = $"+strconv.Itoa(argIndex))
+				args = append(args, currency)
+				argIndex++
+			}
+			if availability, ok := productData["availability"].(string); ok {
+				setParts = append(setParts, "availability = $"+strconv.Itoa(argIndex))
+				args = append(args, availability)
+				argIndex++
+			}
+
+			// Handle JSON fields
+			if imgs, ok := productData["images"].([]interface{}); ok {
+				imgStrs := make([]string, len(imgs))
+				for i, img := range imgs {
+					if imgStr, ok := img.(string); ok {
+						imgStrs[i] = imgStr
+					}
+				}
+				setParts = append(setParts, "images = $"+strconv.Itoa(argIndex))
+				args = append(args, "{"+strings.Join(imgStrs, ",")+"}")
+				argIndex++
+			}
+
+			if vars, ok := productData["variants"].([]interface{}); ok {
+				if variantsBytes, err := json.Marshal(vars); err == nil {
+					setParts = append(setParts, "variants = $"+strconv.Itoa(argIndex))
+					args = append(args, string(variantsBytes))
+					argIndex++
+				}
+			}
+
+			if meta, ok := productData["metadata"]; ok {
+				if metadataBytes, err := json.Marshal(meta); err == nil {
+					setParts = append(setParts, "metadata = $"+strconv.Itoa(argIndex))
+					args = append(args, string(metadataBytes))
+					argIndex++
+				}
+			}
+
+			if len(setParts) == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "No valid fields to update"})
+				return
+			}
+
+			setParts = append(setParts, "updated_at = NOW()")
+			args = append(args, id)
+
+			query := "UPDATE products SET " + strings.Join(setParts, ", ") + " WHERE id = $" + strconv.Itoa(argIndex)
+
+			_, err = db.Exec(query, args...)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update product: " + err.Error()})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"message": "Product updated successfully"})
+		})
+
+		// Delete product
+		products.DELETE("/:id", func(c *gin.Context) {
+			// Add CORS headers
+			c.Header("Access-Control-Allow-Origin", "*")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+			id := c.Param("id")
+
+			result, err := db.Exec("DELETE FROM products WHERE id = $1", id)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete product"})
+				return
+			}
+
+			rowsAffected, err := result.RowsAffected()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete product"})
+				return
+			}
+
+			if rowsAffected == 0 {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+				return
+			}
+
+			c.Status(http.StatusNoContent)
+		})
+	}
+
+	// Connectors
+	api.GET("/connectors", func(c *gin.Context) {
 			// Query connectors from Supabase database
 			rows, err := db.Query("SELECT id, name, type, status, shop_domain, created_at, last_sync FROM connectors ORDER BY created_at DESC")
 			if err != nil {
