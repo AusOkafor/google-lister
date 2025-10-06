@@ -67,6 +67,16 @@ type ShopifyMetafield struct {
 	Value string `json:"value"`
 }
 
+// SEO Enhancement struct for AI-generated SEO data
+type SEOEnhancement struct {
+	SEOTitle       string   `json:"seo_title"`
+	SEODescription string   `json:"seo_description"`
+	Keywords       []string `json:"keywords"`
+	MetaKeywords   string   `json:"meta_keywords"`
+	AltText        string   `json:"alt_text"`
+	SchemaMarkup   string   `json:"schema_markup"`
+}
+
 var (
 	db      *sql.DB
 	dbMutex sync.Mutex
@@ -74,6 +84,73 @@ var (
 	connectors     []Connector
 	connectorMutex sync.RWMutex
 )
+
+// AI-powered SEO enhancement function
+func enhanceProductSEO(product ShopifyProduct) SEOEnhancement {
+	// For now, we'll use a simple rule-based approach
+	// In production, this would call an AI service like OpenAI, Claude, or a custom ML model
+
+	title := product.Title
+	description := product.Description
+	category := product.ProductType
+	vendor := product.Vendor
+
+	// Generate SEO title (max 60 characters for optimal SEO)
+	seoTitle := title
+	if len(seoTitle) > 60 {
+		seoTitle = seoTitle[:57] + "..."
+	}
+
+	// Generate SEO description (max 160 characters)
+	seoDescription := description
+	if len(seoDescription) > 160 {
+		seoDescription = seoDescription[:157] + "..."
+	} else if seoDescription == "" {
+		seoDescription = fmt.Sprintf("Shop %s online. High-quality %s from %s. Fast shipping and great customer service.", title, category, vendor)
+	}
+
+	// Generate keywords based on product attributes
+	keywords := []string{
+		strings.ToLower(title),
+		strings.ToLower(category),
+		strings.ToLower(vendor),
+		"online shopping",
+		"buy online",
+	}
+
+	// Add category-specific keywords
+	if category != "" {
+		keywords = append(keywords, strings.ToLower(category)+" for sale")
+	}
+
+	// Generate meta keywords
+	metaKeywords := strings.Join(keywords, ", ")
+
+	// Generate alt text for images
+	altText := fmt.Sprintf("%s - %s product from %s", title, category, vendor)
+
+	// Generate basic schema markup for product
+	schemaMarkup := fmt.Sprintf(`{
+		"@context": "https://schema.org",
+		"@type": "Product",
+		"name": "%s",
+		"description": "%s",
+		"brand": {
+			"@type": "Brand",
+			"name": "%s"
+		},
+		"category": "%s"
+	}`, title, description, vendor, category)
+
+	return SEOEnhancement{
+		SEOTitle:       seoTitle,
+		SEODescription: seoDescription,
+		Keywords:       keywords,
+		MetaKeywords:   metaKeywords,
+		AltText:        altText,
+		SchemaMarkup:   schemaMarkup,
+	}
+}
 
 // initDB initializes the database connection
 func initDB() error {
@@ -1604,6 +1681,24 @@ func processProductUpdate(product ShopifyProduct, shopDomain, topic string) map[
 	// Transform Shopify product to our format
 	transformedProduct := transformShopifyProduct(product, shopDomain, make(map[int64]int))
 
+	// 🚀 AI-POWERED SEO ENHANCEMENT
+	seoEnhancement := enhanceProductSEO(product)
+
+	// Create enhanced metadata with SEO data
+	enhancedMetadata := map[string]interface{}{
+		"seo_title":       seoEnhancement.SEOTitle,
+		"seo_description": seoEnhancement.SEODescription,
+		"keywords":        seoEnhancement.Keywords,
+		"meta_keywords":   seoEnhancement.MetaKeywords,
+		"alt_text":        seoEnhancement.AltText,
+		"schema_markup":   seoEnhancement.SchemaMarkup,
+		"seo_enhanced":    true,
+		"seo_enhanced_at": time.Now().Format(time.RFC3339),
+	}
+
+	// Convert enhanced metadata to JSON
+	enhancedMetadataJSON, _ := json.Marshal(enhancedMetadata)
+
 	// Update product in database
 	_, err = db.Exec(`
 		UPDATE products 
@@ -1620,7 +1715,7 @@ func processProductUpdate(product ShopifyProduct, shopDomain, topic string) map[
 		transformedProduct.Category,
 		fmt.Sprintf("{%s}", strings.Join(transformedProduct.Images, ",")),
 		transformedProduct.Variants,
-		transformedProduct.Metadata,
+		string(enhancedMetadataJSON),
 		existingProductID,
 	)
 
@@ -1652,6 +1747,24 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 
 	// Transform Shopify product to our format
 	transformedProduct := transformShopifyProduct(product, shopDomain, make(map[int64]int))
+
+	// 🚀 AI-POWERED SEO ENHANCEMENT
+	seoEnhancement := enhanceProductSEO(product)
+
+	// Create enhanced metadata with SEO data
+	enhancedMetadata := map[string]interface{}{
+		"seo_title":       seoEnhancement.SEOTitle,
+		"seo_description": seoEnhancement.SEODescription,
+		"keywords":        seoEnhancement.Keywords,
+		"meta_keywords":   seoEnhancement.MetaKeywords,
+		"alt_text":        seoEnhancement.AltText,
+		"schema_markup":   seoEnhancement.SchemaMarkup,
+		"seo_enhanced":    true,
+		"seo_enhanced_at": time.Now().Format(time.RFC3339),
+	}
+
+	// Convert enhanced metadata to JSON
+	enhancedMetadataJSON, _ := json.Marshal(enhancedMetadata)
 
 	// Get connector ID
 	var connectorID string
@@ -1695,7 +1808,7 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 		transformedProduct.Category,
 		fmt.Sprintf("{%s}", strings.Join(transformedProduct.Images, ",")),
 		transformedProduct.Variants,
-		transformedProduct.Metadata,
+		string(enhancedMetadataJSON),
 		"ACTIVE",
 	)
 
@@ -1719,7 +1832,7 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 			`, transformedProduct.Title, transformedProduct.Description, getFloatValue(transformedProduct.Price),
 				transformedProduct.Currency, transformedProduct.Brand, transformedProduct.Category,
 				fmt.Sprintf("{%s}", strings.Join(transformedProduct.Images, ",")), transformedProduct.Variants,
-				transformedProduct.Metadata, "ACTIVE", existingID)
+				string(enhancedMetadataJSON), "ACTIVE", existingID)
 		} else {
 			// Product doesn't exist, insert it
 			_, err = db.Exec(`
@@ -1730,7 +1843,7 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 			`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
 				getFloatValue(transformedProduct.Price), transformedProduct.Currency, transformedProduct.Brand,
 				transformedProduct.Category, fmt.Sprintf("{%s}", strings.Join(transformedProduct.Images, ",")),
-				transformedProduct.Variants, transformedProduct.Metadata, "ACTIVE")
+				transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
 		}
 	}
 
@@ -4223,6 +4336,24 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					// Transform product (Shopify should include inventory data by default)
 					transformedProduct := transformShopifyProduct(product, connector.ShopDomain, make(map[int64]int))
 
+					// 🚀 AI-POWERED SEO ENHANCEMENT
+					seoEnhancement := enhanceProductSEO(product)
+
+					// Create enhanced metadata with SEO data
+					enhancedMetadata := map[string]interface{}{
+						"seo_title":       seoEnhancement.SEOTitle,
+						"seo_description": seoEnhancement.SEODescription,
+						"keywords":        seoEnhancement.Keywords,
+						"meta_keywords":   seoEnhancement.MetaKeywords,
+						"alt_text":        seoEnhancement.AltText,
+						"schema_markup":   seoEnhancement.SchemaMarkup,
+						"seo_enhanced":    true,
+						"seo_enhanced_at": time.Now().Format(time.RFC3339),
+					}
+
+					// Convert enhanced metadata to JSON
+					enhancedMetadataJSON, _ := json.Marshal(enhancedMetadata)
+
 					// Convert Go slice to PostgreSQL array format for images
 					imageURLsArray := "{" + strings.Join(transformedProduct.Images, ",") + "}"
 
@@ -4247,7 +4378,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
 						transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
 						transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
-						transformedProduct.Variants, transformedProduct.Metadata, "ACTIVE")
+						transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
 
 					// If upsert fails due to missing constraint, fallback to check-and-insert
 					if err != nil && strings.Contains(err.Error(), "no unique or exclusion constraint") {
@@ -4269,7 +4400,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							`, transformedProduct.Title, transformedProduct.Description, transformedProduct.Price,
 								transformedProduct.Currency, transformedProduct.SKU, transformedProduct.Brand,
 								transformedProduct.Category, imageURLsArray, transformedProduct.Variants,
-								transformedProduct.Metadata, "ACTIVE", existingID)
+								string(enhancedMetadataJSON), "ACTIVE", existingID)
 						} else {
 							// Product doesn't exist, insert it
 							_, err = db.Exec(`
@@ -4278,7 +4409,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
 								transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
 								transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
-								transformedProduct.Variants, transformedProduct.Metadata, "ACTIVE")
+								transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
 						}
 					}
 
