@@ -51,10 +51,14 @@ type ShopifyImage struct {
 }
 
 type ShopifyVariant struct {
-	ID    int64  `json:"id"`
-	Title string `json:"title"`
-	Price string `json:"price"`
-	SKU   string `json:"sku"`
+	ID                  int64  `json:"id"`
+	Title               string `json:"title"`
+	Price               string `json:"price"`
+	SKU                 string `json:"sku"`
+	InventoryQuantity   int    `json:"inventory_quantity"`
+	InventoryManagement string `json:"inventory_management"`
+	InventoryPolicy     string `json:"inventory_policy"`
+	Available           *bool  `json:"available"`
 }
 
 type ShopifyMetafield struct {
@@ -262,8 +266,8 @@ func fetchShopifyProducts(shopDomain, accessToken string) ([]ShopifyProduct, err
 	// Create HTTP client
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	// Build API URL with proper format (fetch all products)
-	apiURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", cleanDomain)
+	// Build API URL with proper format (fetch all products with inventory information)
+	apiURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250&fields=id,title,body_html,vendor,product_type,images,variants,metafields", cleanDomain)
 
 	// Create request
 	req, err := http.NewRequest("GET", apiURL, nil)
@@ -303,6 +307,148 @@ func fetchShopifyProducts(shopDomain, accessToken string) ([]ShopifyProduct, err
 	}
 
 	return response.Products, nil
+}
+
+// fetchInventoryLevels fetches inventory levels for product variants from Shopify
+func fetchInventoryLevels(shopDomain, accessToken string, variantIDs []int64) (map[int64]int, error) {
+	if len(variantIDs) == 0 {
+		return make(map[int64]int), nil
+	}
+
+	// Clean shop domain
+	cleanDomain := shopDomain
+	if strings.HasSuffix(shopDomain, ".myshopify.com") {
+		cleanDomain = strings.TrimSuffix(shopDomain, ".myshopify.com")
+	}
+
+	// Create HTTP client
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	// Convert variant IDs to comma-separated string
+	var variantIDStrings []string
+	for _, id := range variantIDs {
+		variantIDStrings = append(variantIDStrings, fmt.Sprintf("%d", id))
+	}
+	variantIDsParam := strings.Join(variantIDStrings, ",")
+
+	// Build API URL to get inventory item IDs for variants
+	variantsURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/variants.json?ids=%s", cleanDomain, variantIDsParam)
+
+	// Create request for variants
+	req, err := http.NewRequest("GET", variantsURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create variants request: %v", err)
+	}
+
+	// Add headers
+	req.Header.Set("X-Shopify-Access-Token", accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	// Make request for variants
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("variants request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read variants response: %v", err)
+	}
+
+	// Check status
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Shopify variants API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse variants response to get inventory item IDs
+	var variantsResponse struct {
+		Variants []struct {
+			ID              int64 `json:"id"`
+			InventoryItemID int64 `json:"inventory_item_id"`
+		} `json:"variants"`
+	}
+
+	if err := json.Unmarshal(body, &variantsResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse variants JSON: %v", err)
+	}
+
+	// Extract inventory item IDs
+	var inventoryItemIDs []int64
+	variantToInventoryItem := make(map[int64]int64)
+	for _, variant := range variantsResponse.Variants {
+		inventoryItemIDs = append(inventoryItemIDs, variant.InventoryItemID)
+		variantToInventoryItem[variant.ID] = variant.InventoryItemID
+	}
+
+	if len(inventoryItemIDs) == 0 {
+		return make(map[int64]int), nil
+	}
+
+	// Convert inventory item IDs to comma-separated string
+	var inventoryIDStrings []string
+	for _, id := range inventoryItemIDs {
+		inventoryIDStrings = append(inventoryIDStrings, fmt.Sprintf("%d", id))
+	}
+	inventoryIDsParam := strings.Join(inventoryIDStrings, ",")
+
+	// Build API URL to get inventory levels
+	inventoryURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/inventory_levels.json?inventory_item_ids=%s", cleanDomain, inventoryIDsParam)
+
+	// Create request for inventory levels
+	req, err = http.NewRequest("GET", inventoryURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create inventory request: %v", err)
+	}
+
+	// Add headers
+	req.Header.Set("X-Shopify-Access-Token", accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	// Make request for inventory levels
+	resp, err = client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("inventory request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read inventory response: %v", err)
+	}
+
+	// Check status
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Shopify inventory API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse inventory levels response
+	var inventoryResponse struct {
+		InventoryLevels []struct {
+			InventoryItemID int64 `json:"inventory_item_id"`
+			Available       int   `json:"available"`
+		} `json:"inventory_levels"`
+	}
+
+	if err := json.Unmarshal(body, &inventoryResponse); err != nil {
+		return nil, fmt.Errorf("failed to parse inventory JSON: %v", err)
+	}
+
+	// Map inventory levels to variant IDs
+	inventoryLevels := make(map[int64]int)
+	for _, level := range inventoryResponse.InventoryLevels {
+		// Find variant ID for this inventory item ID
+		for variantID, inventoryItemID := range variantToInventoryItem {
+			if inventoryItemID == level.InventoryItemID {
+				inventoryLevels[variantID] = level.Available
+				break
+			}
+		}
+	}
+
+	return inventoryLevels, nil
 }
 
 // getStringValue safely extracts string value from sql.NullString
@@ -1455,7 +1601,7 @@ func processProductUpdate(product ShopifyProduct, shopDomain, topic string) map[
 	}
 
 	// Transform Shopify product to our format
-	transformedProduct := transformShopifyProduct(product, shopDomain)
+	transformedProduct := transformShopifyProduct(product, shopDomain, make(map[int64]int))
 
 	// Update product in database
 	_, err = db.Exec(`
@@ -1504,7 +1650,7 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 	}
 
 	// Transform Shopify product to our format
-	transformedProduct := transformShopifyProduct(product, shopDomain)
+	transformedProduct := transformShopifyProduct(product, shopDomain, make(map[int64]int))
 
 	// Get connector ID
 	var connectorID string
@@ -1923,12 +2069,13 @@ func getWebhookStatus(shopDomain, accessToken string) map[string]interface{} {
 }
 
 // transformShopifyProduct converts Shopify product to our internal format
-func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string) struct {
+func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string, inventoryLevels map[int64]int) struct {
 	ExternalID  string
 	Title       string
 	Description string
 	Price       sql.NullFloat64
 	Currency    string
+	SKU         sql.NullString
 	Brand       string
 	Category    string
 	Images      []string
@@ -1941,17 +2088,42 @@ func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string) s
 		images = append(images, img.URL)
 	}
 
-	// Extract variants as JSON
-	variantsJSON, _ := json.Marshal(shopifyProduct.Variants)
+	// Extract variants as JSON with inventory data
+	variantsWithInventory := make([]map[string]interface{}, len(shopifyProduct.Variants))
+	for i, variant := range shopifyProduct.Variants {
+		variantMap := map[string]interface{}{
+			"id":                   variant.ID,
+			"title":                variant.Title,
+			"price":                variant.Price,
+			"sku":                  variant.SKU,
+			"inventory_quantity":   0, // Default to 0
+			"inventory_management": variant.InventoryManagement,
+			"inventory_policy":     variant.InventoryPolicy,
+			"available":            variant.Available,
+		}
+
+		// Add inventory level if available
+		if inventoryLevel, exists := inventoryLevels[variant.ID]; exists {
+			variantMap["inventory_quantity"] = inventoryLevel
+		}
+
+		variantsWithInventory[i] = variantMap
+	}
+
+	variantsJSON, _ := json.Marshal(variantsWithInventory)
 
 	// Extract metafields as JSON
 	metafieldsJSON, _ := json.Marshal(shopifyProduct.Metafields)
 
-	// Calculate price from first variant
+	// Calculate price and extract SKU from first variant
 	var price sql.NullFloat64
+	var sku sql.NullString
 	if len(shopifyProduct.Variants) > 0 {
 		if p, err := strconv.ParseFloat(shopifyProduct.Variants[0].Price, 64); err == nil {
 			price = sql.NullFloat64{Float64: p, Valid: true}
+		}
+		if shopifyProduct.Variants[0].SKU != "" {
+			sku = sql.NullString{String: shopifyProduct.Variants[0].SKU, Valid: true}
 		}
 	}
 
@@ -1961,6 +2133,7 @@ func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string) s
 		Description string
 		Price       sql.NullFloat64
 		Currency    string
+		SKU         sql.NullString
 		Brand       string
 		Category    string
 		Images      []string
@@ -1972,6 +2145,7 @@ func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string) s
 		Description: shopifyProduct.Description,
 		Price:       price,
 		Currency:    "USD", // Default currency
+		SKU:         sku,
 		Brand:       shopifyProduct.Vendor,
 		Category:    shopifyProduct.ProductType,
 		Images:      images,
@@ -4013,42 +4187,40 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
+				// Collect all variant IDs for inventory lookup
+				var allVariantIDs []int64
+				for _, product := range products {
+					for _, variant := range product.Variants {
+						allVariantIDs = append(allVariantIDs, variant.ID)
+					}
+				}
+
+				// Fetch inventory levels for all variants
+				inventoryLevels, err := fetchInventoryLevels(connector.ShopDomain, connector.AccessToken, allVariantIDs)
+				if err != nil {
+					// Log error but continue without inventory data
+					fmt.Printf("Warning: Failed to fetch inventory levels: %v\n", err)
+					inventoryLevels = make(map[int64]int)
+				}
+
 				// Store products in database
 				syncedCount := 0
 				var errors []string
 
 				for _, product := range products {
-					// Extract first variant price and SKU
-					var price sql.NullFloat64
-					var sku sql.NullString
-					if len(product.Variants) > 0 {
-						// Convert price string to float
-						if p, err := fmt.Sscanf(product.Variants[0].Price, "%f", &price); err == nil && p == 1 {
-							// Price converted successfully
-						}
-						if product.Variants[0].SKU != "" {
-							sku = sql.NullString{String: product.Variants[0].SKU, Valid: true}
-						}
-					}
+					// Transform product with inventory data
+					transformedProduct := transformShopifyProduct(product, connector.ShopDomain, inventoryLevels)
 
-					// Extract image URLs and convert to PostgreSQL array format
-					var imageURLs []string
-					for _, img := range product.Images {
-						imageURLs = append(imageURLs, img.URL)
-					}
-
-					// Convert variants to JSON
-					variantsJSON, _ := json.Marshal(product.Variants)
-					metafieldsJSON, _ := json.Marshal(product.Metafields)
-
-					// Convert Go slice to PostgreSQL array format
-					imageURLsArray := "{" + strings.Join(imageURLs, ",") + "}"
+					// Convert Go slice to PostgreSQL array format for images
+					imageURLsArray := "{" + strings.Join(transformedProduct.Images, ",") + "}"
 
 					_, err := db.Exec(`
 						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status)
 						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-					`, connectorID, fmt.Sprintf("%d", product.ID), product.Title, product.Description, price, "USD", sku, product.Vendor, product.ProductType,
-						imageURLsArray, string(variantsJSON), string(metafieldsJSON), "ACTIVE")
+					`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
+						transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
+						transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
+						transformedProduct.Variants, transformedProduct.Metadata, "ACTIVE")
 
 					if err != nil {
 						errors = append(errors, fmt.Sprintf("Product %s: %v", product.Title, err))
