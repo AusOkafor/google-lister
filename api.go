@@ -4414,6 +4414,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					imageURLsArray := "{" + strings.Join(transformedProduct.Images, ",") + "}"
 
 					// Try upsert first, fallback to check-and-insert if constraint doesn't exist
+					fmt.Printf("🔍 About to insert/update product with metadata length: %d\n", len(string(enhancedMetadataJSON)))
 					_, err := db.Exec(`
 						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, updated_at)
 						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
@@ -4436,6 +4437,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
 						transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
 
+					if err != nil {
+						fmt.Printf("🔍 Database error: %v\n", err)
+					} else {
+						fmt.Printf("🔍 Product successfully updated with SEO metadata\n")
+					}
+
 					// If upsert fails due to missing constraint, fallback to check-and-insert
 					if err != nil && strings.Contains(err.Error(), "no unique or exclusion constraint") {
 						// Check if product already exists
@@ -4447,6 +4454,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 						if checkErr == nil {
 							// Product exists, update it
+							fmt.Printf("🔍 Updating existing product %s with metadata length: %d\n", existingID, len(string(enhancedMetadataJSON)))
 							_, err = db.Exec(`
 								UPDATE products SET 
 									title = $1, description = $2, price = $3, currency = $4, 
@@ -4457,6 +4465,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 								transformedProduct.Currency, transformedProduct.SKU, transformedProduct.Brand,
 								transformedProduct.Category, imageURLsArray, transformedProduct.Variants,
 								string(enhancedMetadataJSON), "ACTIVE", existingID)
+							if err != nil {
+								fmt.Printf("🔍 Update error: %v\n", err)
+							} else {
+								fmt.Printf("🔍 Product updated successfully\n")
+							}
 						} else {
 							// Product doesn't exist, insert it
 							_, err = db.Exec(`
