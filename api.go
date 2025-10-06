@@ -134,6 +134,7 @@ func initDB() error {
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 			UNIQUE(connector_id, external_id)
 		);`,
+		`ALTER TABLE products ADD CONSTRAINT IF NOT EXISTS products_connector_external_unique UNIQUE(connector_id, external_id);`,
 		`CREATE TABLE IF NOT EXISTS feed_variants (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			product_id UUID REFERENCES products(id),
@@ -1664,7 +1665,7 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 		return result
 	}
 
-	// Insert or update product
+	// Try upsert first, fallback to check-and-insert if constraint doesn't exist
 	_, err = db.Exec(`
 		INSERT INTO products (
 			connector_id, external_id, title, description, price, currency,
@@ -1697,6 +1698,41 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 		transformedProduct.Metadata,
 		"ACTIVE",
 	)
+
+	// If upsert fails due to missing constraint, fallback to check-and-insert
+	if err != nil && strings.Contains(err.Error(), "no unique or exclusion constraint") {
+		// Check if product already exists
+		var existingID string
+		checkErr := db.QueryRow(`
+			SELECT id FROM products 
+			WHERE connector_id = $1 AND external_id = $2
+		`, connectorID, transformedProduct.ExternalID).Scan(&existingID)
+
+		if checkErr == nil {
+			// Product exists, update it
+			_, err = db.Exec(`
+				UPDATE products SET 
+					title = $1, description = $2, price = $3, currency = $4, 
+					brand = $5, category = $6, images = $7, 
+					variants = $8, metadata = $9, status = $10, updated_at = NOW()
+				WHERE id = $11
+			`, transformedProduct.Title, transformedProduct.Description, getFloatValue(transformedProduct.Price),
+				transformedProduct.Currency, transformedProduct.Brand, transformedProduct.Category,
+				fmt.Sprintf("{%s}", strings.Join(transformedProduct.Images, ",")), transformedProduct.Variants,
+				transformedProduct.Metadata, "ACTIVE", existingID)
+		} else {
+			// Product doesn't exist, insert it
+			_, err = db.Exec(`
+				INSERT INTO products (
+					connector_id, external_id, title, description, price, currency,
+					brand, category, images, variants, metadata, status, created_at, updated_at
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+			`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
+				getFloatValue(transformedProduct.Price), transformedProduct.Currency, transformedProduct.Brand,
+				transformedProduct.Category, fmt.Sprintf("{%s}", strings.Join(transformedProduct.Images, ",")),
+				transformedProduct.Variants, transformedProduct.Metadata, "ACTIVE")
+		}
+	}
 
 	if err != nil {
 		result["status"] = "error"
@@ -4190,6 +4226,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					// Convert Go slice to PostgreSQL array format for images
 					imageURLsArray := "{" + strings.Join(transformedProduct.Images, ",") + "}"
 
+					// Try upsert first, fallback to check-and-insert if constraint doesn't exist
 					_, err := db.Exec(`
 						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, updated_at)
 						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
@@ -4211,6 +4248,39 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
 						transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
 						transformedProduct.Variants, transformedProduct.Metadata, "ACTIVE")
+
+					// If upsert fails due to missing constraint, fallback to check-and-insert
+					if err != nil && strings.Contains(err.Error(), "no unique or exclusion constraint") {
+						// Check if product already exists
+						var existingID string
+						checkErr := db.QueryRow(`
+							SELECT id FROM products 
+							WHERE connector_id = $1 AND external_id = $2
+						`, connectorID, transformedProduct.ExternalID).Scan(&existingID)
+
+						if checkErr == nil {
+							// Product exists, update it
+							_, err = db.Exec(`
+								UPDATE products SET 
+									title = $1, description = $2, price = $3, currency = $4, 
+									sku = $5, brand = $6, category = $7, images = $8, 
+									variants = $9, metadata = $10, status = $11, updated_at = NOW()
+								WHERE id = $12
+							`, transformedProduct.Title, transformedProduct.Description, transformedProduct.Price,
+								transformedProduct.Currency, transformedProduct.SKU, transformedProduct.Brand,
+								transformedProduct.Category, imageURLsArray, transformedProduct.Variants,
+								transformedProduct.Metadata, "ACTIVE", existingID)
+						} else {
+							// Product doesn't exist, insert it
+							_, err = db.Exec(`
+								INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, updated_at)
+								VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+							`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
+								transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
+								transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
+								transformedProduct.Variants, transformedProduct.Metadata, "ACTIVE")
+						}
+					}
 
 					if err != nil {
 						errors = append(errors, fmt.Sprintf("Product %s: %v", product.Title, err))
