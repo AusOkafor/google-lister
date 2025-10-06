@@ -1664,12 +1664,25 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 		return result
 	}
 
-	// Insert new product
+	// Insert or update product
 	_, err = db.Exec(`
 		INSERT INTO products (
 			connector_id, external_id, title, description, price, currency,
 			brand, category, images, variants, metadata, status, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+		ON CONFLICT (connector_id, external_id) 
+		DO UPDATE SET 
+			title = EXCLUDED.title,
+			description = EXCLUDED.description,
+			price = EXCLUDED.price,
+			currency = EXCLUDED.currency,
+			brand = EXCLUDED.brand,
+			category = EXCLUDED.category,
+			images = EXCLUDED.images,
+			variants = EXCLUDED.variants,
+			metadata = EXCLUDED.metadata,
+			status = EXCLUDED.status,
+			updated_at = NOW()
 	`,
 		connectorID,
 		transformedProduct.ExternalID,
@@ -4178,8 +4191,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					imageURLsArray := "{" + strings.Join(transformedProduct.Images, ",") + "}"
 
 					_, err := db.Exec(`
-						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status)
-						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, updated_at)
+						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+						ON CONFLICT (connector_id, external_id) 
+						DO UPDATE SET 
+							title = EXCLUDED.title,
+							description = EXCLUDED.description,
+							price = EXCLUDED.price,
+							currency = EXCLUDED.currency,
+							sku = EXCLUDED.sku,
+							brand = EXCLUDED.brand,
+							category = EXCLUDED.category,
+							images = EXCLUDED.images,
+							variants = EXCLUDED.variants,
+							metadata = EXCLUDED.metadata,
+							status = EXCLUDED.status,
+							updated_at = NOW()
 					`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
 						transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
 						transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
