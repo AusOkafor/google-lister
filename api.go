@@ -85,23 +85,97 @@ var (
 	connectorMutex sync.RWMutex
 )
 
-// AI-powered SEO enhancement function
+// AI-powered SEO enhancement function using OpenRouter
 func enhanceProductSEO(product ShopifyProduct) SEOEnhancement {
-	// For now, we'll use a simple rule-based approach
-	// In production, this would call an AI service like OpenAI, Claude, or a custom ML model
+	// Try OpenRouter AI enhancement first
+	enhancement, err := callOpenRouterForSEO(product)
+	if err == nil {
+		return enhancement
+	}
+	fmt.Printf("[WARN] OpenRouter AI SEO enhancement failed, using fallback: %v\n", err)
 
+	// Fallback to rule-based approach
+	return createFallbackSEO(product)
+}
+
+// callOpenRouterForSEO - Make API call to OpenRouter for SEO enhancement
+func callOpenRouterForSEO(product ShopifyProduct) (SEOEnhancement, error) {
+	// Convert product to map for AI processing
+	price := "0"
+	sku := ""
+	if len(product.Variants) > 0 {
+		price = product.Variants[0].Price
+		sku = product.Variants[0].SKU
+	}
+
+	productMap := map[string]interface{}{
+		"title":        product.Title,
+		"description":  product.Description,
+		"product_type": product.ProductType,
+		"vendor":       product.Vendor,
+		"price":        price,
+		"sku":          sku,
+	}
+
+	productJSON, err := json.Marshal(productMap)
+	if err != nil {
+		return SEOEnhancement{}, fmt.Errorf("failed to marshal product: %v", err)
+	}
+
+	// Create AI prompt for SEO enhancement
+	prompt := fmt.Sprintf(`
+You are an expert e-commerce SEO specialist. Analyze this product and provide comprehensive SEO optimization.
+
+Product data: %s
+
+Provide a JSON response with the following structure:
+{
+  "seo_title": "Optimized title under 60 characters",
+  "seo_description": "Meta description under 160 characters",
+  "keywords": ["keyword1", "keyword2", "keyword3"],
+  "meta_keywords": "keyword1, keyword2, keyword3",
+  "alt_text": "Descriptive alt text for product images",
+  "schema_markup": "JSON-LD structured data for the product"
+}
+
+Requirements:
+- SEO title: Under 60 characters, keyword-rich, compelling
+- SEO description: Under 160 characters, persuasive, includes CTA
+- Keywords: 5-10 relevant keywords from title, category, brand
+- Alt text: Descriptive, includes product name and key features
+- Schema markup: Valid JSON-LD for Product type with name, description, brand, category
+
+Return ONLY the JSON response, no explanations.
+`, string(productJSON))
+
+	// Use the existing OpenRouter AI function
+	response, err := callOpenRouterAI(prompt, 500, 0.7)
+	if err != nil {
+		return SEOEnhancement{}, fmt.Errorf("OpenRouter AI call failed: %v", err)
+	}
+
+	// Parse AI response
+	var enhancement SEOEnhancement
+	if err := json.Unmarshal([]byte(response), &enhancement); err != nil {
+		return SEOEnhancement{}, fmt.Errorf("failed to parse AI response: %v", err)
+	}
+
+	return enhancement, nil
+}
+
+// createFallbackSEO - Create fallback SEO when AI fails
+func createFallbackSEO(product ShopifyProduct) SEOEnhancement {
 	title := product.Title
 	description := product.Description
 	category := product.ProductType
 	vendor := product.Vendor
 
-	// Generate SEO title (max 60 characters for optimal SEO)
+	// Create fallback SEO
 	seoTitle := title
 	if len(seoTitle) > 60 {
 		seoTitle = seoTitle[:57] + "..."
 	}
 
-	// Generate SEO description (max 160 characters)
 	seoDescription := description
 	if len(seoDescription) > 160 {
 		seoDescription = seoDescription[:157] + "..."
@@ -109,7 +183,6 @@ func enhanceProductSEO(product ShopifyProduct) SEOEnhancement {
 		seoDescription = fmt.Sprintf("Shop %s online. High-quality %s from %s. Fast shipping and great customer service.", title, category, vendor)
 	}
 
-	// Generate keywords based on product attributes
 	keywords := []string{
 		strings.ToLower(title),
 		strings.ToLower(category),
@@ -118,37 +191,17 @@ func enhanceProductSEO(product ShopifyProduct) SEOEnhancement {
 		"buy online",
 	}
 
-	// Add category-specific keywords
 	if category != "" {
 		keywords = append(keywords, strings.ToLower(category)+" for sale")
 	}
-
-	// Generate meta keywords
-	metaKeywords := strings.Join(keywords, ", ")
-
-	// Generate alt text for images
-	altText := fmt.Sprintf("%s - %s product from %s", title, category, vendor)
-
-	// Generate basic schema markup for product
-	schemaMarkup := fmt.Sprintf(`{
-		"@context": "https://schema.org",
-		"@type": "Product",
-		"name": "%s",
-		"description": "%s",
-		"brand": {
-			"@type": "Brand",
-			"name": "%s"
-		},
-		"category": "%s"
-	}`, title, description, vendor, category)
 
 	return SEOEnhancement{
 		SEOTitle:       seoTitle,
 		SEODescription: seoDescription,
 		Keywords:       keywords,
-		MetaKeywords:   metaKeywords,
-		AltText:        altText,
-		SchemaMarkup:   schemaMarkup,
+		MetaKeywords:   strings.Join(keywords, ", "),
+		AltText:        fmt.Sprintf("%s - %s product from %s", title, category, vendor),
+		SchemaMarkup:   fmt.Sprintf(`{"@context":"https://schema.org","@type":"Product","name":"%s","description":"%s","brand":{"@type":"Brand","name":"%s"},"category":"%s"}`, title, description, vendor, category),
 	}
 }
 
