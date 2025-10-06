@@ -266,8 +266,8 @@ func fetchShopifyProducts(shopDomain, accessToken string) ([]ShopifyProduct, err
 	// Create HTTP client
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	// Build API URL with proper format (fetch all products with inventory information)
-	apiURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250&fields=id,title,body_html,vendor,product_type,images,variants,metafields", cleanDomain)
+	// Build API URL - let Shopify return all default fields including inventory data
+	apiURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", cleanDomain)
 
 	// Create request
 	req, err := http.NewRequest("GET", apiURL, nil)
@@ -2088,29 +2088,8 @@ func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string, i
 		images = append(images, img.URL)
 	}
 
-	// Extract variants as JSON with inventory data
-	variantsWithInventory := make([]map[string]interface{}, len(shopifyProduct.Variants))
-	for i, variant := range shopifyProduct.Variants {
-		variantMap := map[string]interface{}{
-			"id":                   variant.ID,
-			"title":                variant.Title,
-			"price":                variant.Price,
-			"sku":                  variant.SKU,
-			"inventory_quantity":   0, // Default to 0
-			"inventory_management": variant.InventoryManagement,
-			"inventory_policy":     variant.InventoryPolicy,
-			"available":            variant.Available,
-		}
-
-		// Add inventory level if available
-		if inventoryLevel, exists := inventoryLevels[variant.ID]; exists {
-			variantMap["inventory_quantity"] = inventoryLevel
-		}
-
-		variantsWithInventory[i] = variantMap
-	}
-
-	variantsJSON, _ := json.Marshal(variantsWithInventory)
+	// Extract variants as JSON (use what Shopify provides by default)
+	variantsJSON, _ := json.Marshal(shopifyProduct.Variants)
 
 	// Extract metafields as JSON
 	metafieldsJSON, _ := json.Marshal(shopifyProduct.Metafields)
@@ -4187,29 +4166,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Collect all variant IDs for inventory lookup
-				var allVariantIDs []int64
-				for _, product := range products {
-					for _, variant := range product.Variants {
-						allVariantIDs = append(allVariantIDs, variant.ID)
-					}
-				}
-
-				// Fetch inventory levels for all variants
-				inventoryLevels, err := fetchInventoryLevels(connector.ShopDomain, connector.AccessToken, allVariantIDs)
-				if err != nil {
-					// Log error but continue without inventory data
-					fmt.Printf("Warning: Failed to fetch inventory levels: %v\n", err)
-					inventoryLevels = make(map[int64]int)
-				}
-
-				// Store products in database
+				// Store products in database (use default inventory data from Shopify)
 				syncedCount := 0
 				var errors []string
 
 				for _, product := range products {
-					// Transform product with inventory data
-					transformedProduct := transformShopifyProduct(product, connector.ShopDomain, inventoryLevels)
+					// Transform product (Shopify should include inventory data by default)
+					transformedProduct := transformShopifyProduct(product, connector.ShopDomain, make(map[int64]int))
 
 					// Convert Go slice to PostgreSQL array format for images
 					imageURLsArray := "{" + strings.Join(transformedProduct.Images, ",") + "}"
