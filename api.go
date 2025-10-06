@@ -4390,7 +4390,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					transformedProduct := transformShopifyProduct(product, connector.ShopDomain, make(map[int64]int))
 
 					// 🚀 AI-POWERED SEO ENHANCEMENT
+					fmt.Printf("🔍 Enhancing SEO for product: %s\n", product.Title)
 					seoEnhancement := enhanceProductSEO(product)
+					fmt.Printf("🔍 SEO Enhancement result: %+v\n", seoEnhancement)
 
 					// Create enhanced metadata with SEO data
 					enhancedMetadata := map[string]interface{}{
@@ -4406,6 +4408,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 					// Convert enhanced metadata to JSON
 					enhancedMetadataJSON, _ := json.Marshal(enhancedMetadata)
+					fmt.Printf("🔍 Enhanced metadata JSON: %s\n", string(enhancedMetadataJSON))
 
 					// Convert Go slice to PostgreSQL array format for images
 					imageURLsArray := "{" + strings.Join(transformedProduct.Images, ",") + "}"
