@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/rs/cors"
 )
 
@@ -3303,7 +3303,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				INSERT INTO products (external_id, title, description, price, currency, sku, gtin, brand, category, images, variants, metadata, shipping, custom_labels, status, created_at, updated_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
 				RETURNING id
-			`, externalID, title, description, price, currency, sku, gtin, brand, category, imagesArray, variantsJSON, metadataJSON, shippingJSON, customLabelsArray, "ACTIVE").Scan(&generatedID)
+			`, externalID, title, description, price, currency, sku, gtin, brand, category, pq.Array(imagesArray), variantsJSON, metadataJSON, shippingJSON, pq.Array(customLabelsArray), "ACTIVE").Scan(&generatedID)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product: " + err.Error()})
