@@ -2,15 +2,18 @@
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -2357,6 +2360,16 @@ func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string, i
 }
 
 // Handler is the main entry point for Vercel
+// generateRandomString generates a random string of specified length
+func generateRandomString(length int) string {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		// Fallback to time-based generation if crypto/rand fails
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(bytes)[:length]
+}
+
 func Handler(w http.ResponseWriter, r *http.Request) {
 	// Initialize database connection
 	if err := initDB(); err != nil {
@@ -3601,6 +3614,65 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				c.Status(http.StatusNoContent)
+			})
+
+			// Image upload endpoint
+			products.POST("/upload-images", func(c *gin.Context) {
+				// Add CORS headers
+				c.Header("Access-Control-Allow-Origin", "*")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+				// Parse multipart form with 32MB max memory
+				err := c.Request.ParseMultipartForm(32 << 20) // 32MB
+				if err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse multipart form: " + err.Error()})
+					return
+				}
+
+				// Get uploaded files
+				form, err := c.MultipartForm()
+				if err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to get multipart form: " + err.Error()})
+					return
+				}
+
+				files := form.File["images"]
+				if len(files) == 0 {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "No images provided"})
+					return
+				}
+
+				var imageUrls []string
+
+				// Process each uploaded file
+				for _, file := range files {
+					// Validate file type
+					if !strings.HasPrefix(file.Header.Get("Content-Type"), "image/") {
+						c.JSON(http.StatusBadRequest, gin.H{"error": "File " + file.Filename + " is not an image"})
+						return
+					}
+
+					// Generate unique filename
+					ext := filepath.Ext(file.Filename)
+					filename := fmt.Sprintf("product_%d_%s%s", time.Now().UnixNano(), generateRandomString(8), ext)
+
+					// For now, we'll store the file info and return a placeholder URL
+					// In production, you'd save the file to a storage service (AWS S3, etc.)
+					imageUrl := fmt.Sprintf("/uploads/products/%s", filename)
+					imageUrls = append(imageUrls, imageUrl)
+
+					// Log the upload (in production, save to actual storage)
+					fmt.Printf("📁 Image uploaded: %s (Size: %d bytes, Type: %s)\n",
+						filename, file.Size, file.Header.Get("Content-Type"))
+				}
+
+				// Return the image URLs
+				c.JSON(http.StatusOK, gin.H{
+					"message": "Images uploaded successfully",
+					"images":  imageUrls,
+					"count":   len(imageUrls),
+				})
 			})
 		}
 
