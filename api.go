@@ -3242,10 +3242,28 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				// Create proper variants structure (matching Shopify format)
 				var variantsJSON string
 				if variants, ok := productData["variants"]; ok {
 					if variantsBytes, err := json.Marshal(variants); err == nil {
 						variantsJSON = string(variantsBytes)
+					}
+				} else {
+					// Create default variant structure like Shopify
+					defaultVariant := []map[string]interface{}{
+						{
+							"id":                   fmt.Sprintf("manual_variant_%d", time.Now().Unix()),
+							"sku":                  sku,
+							"price":                fmt.Sprintf("%.2f", price),
+							"title":                "Default Title",
+							"available":            nil,
+							"inventory_policy":     "deny",
+							"inventory_quantity":   1,
+							"inventory_management": "",
+						},
+					}
+					if defaultBytes, err := json.Marshal(defaultVariant); err == nil {
+						variantsJSON = string(defaultBytes)
 					}
 				}
 
@@ -3286,8 +3304,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					brand = b
 				}
 
-				category := ""
-				if cat, ok := productData["category"].(string); ok {
+				category := "EMPTY" // Default category like synced products
+				if cat, ok := productData["category"].(string); ok && cat != "" {
 					category = cat
 				}
 
@@ -3304,30 +3322,33 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Note: mpn, availability, and tax_class are accepted from frontend but not stored in database
 				// since these columns don't exist in the current schema
 
-				// AI-Powered SEO Enhancement
+				// AI-Powered SEO Enhancement (matching synced product structure)
 				enhancedMetadata := metadataJSON
 				if metadataJSON == "" {
-					// Create basic metadata structure for SEO enhancement
+					// Create basic metadata structure for SEO enhancement (matching synced products)
 					basicMetadata := map[string]interface{}{
 						"seo_title":       "",
 						"seo_description": "",
 						"keywords":        []string{},
 						"alt_text":        "",
+						"meta_keywords":   "",
+						"schema_markup":   "",
 						"seo_enhanced":    false,
+						"seo_enhanced_at": "",
 					}
 					if basicBytes, err := json.Marshal(basicMetadata); err == nil {
 						enhancedMetadata = string(basicBytes)
 					}
 				}
 
-				// Basic SEO Enhancement (can be enhanced with AI later)
+				// Basic SEO Enhancement (matching synced product format exactly)
 				fmt.Printf("🔍 SEO Enhancement Debug - Title: %s, Description: %s, Brand: %s, Category: %s\n", title, description, brand, category)
 
 				var existingMetadata map[string]interface{}
 				if err := json.Unmarshal([]byte(enhancedMetadata), &existingMetadata); err == nil {
 					fmt.Printf("🔍 SEO Enhancement Debug - Existing metadata: %+v\n", existingMetadata)
 
-					// Add basic SEO enhancements
+					// Add SEO enhancements matching synced product format exactly
 					if existingMetadata["seo_title"] == "" {
 						existingMetadata["seo_title"] = title
 					}
@@ -3336,6 +3357,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					}
 					if existingMetadata["alt_text"] == "" {
 						existingMetadata["alt_text"] = fmt.Sprintf("%s - %s product from %s", title, category, brand)
+					}
+					if existingMetadata["keywords"] == nil || len(existingMetadata["keywords"].([]string)) == 0 {
+						existingMetadata["keywords"] = []string{title, "", brand, "online shopping", "buy online"}
+					}
+					if existingMetadata["meta_keywords"] == "" {
+						existingMetadata["meta_keywords"] = fmt.Sprintf("%s, , %s, online shopping, buy online", title, brand)
 					}
 					if existingMetadata["schema_markup"] == "" {
 						existingMetadata["schema_markup"] = fmt.Sprintf(`{"@context":"https://schema.org","@type":"Product","name":"%s","description":"%s","brand":{"@type":"Brand","name":"%s"},"category":"%s"}`, title, description, brand, category)
