@@ -3532,11 +3532,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						mainImage = imageList[0]
 					}
 
+					priceStr := "0.00"
+					if price.Valid {
+						priceStr = fmt.Sprintf("%.2f", price.Float64)
+					}
 					products = append(products, map[string]interface{}{
 						"id":           externalID,
 						"title":        title,
 						"description":  description,
-						"price":        fmt.Sprintf("%.2f %s", price, currency),
+						"price":        fmt.Sprintf("%s %s", priceStr, currency),
 						"sku":          sku,
 						"brand":        brand,
 						"category":     category,
@@ -3617,7 +3621,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"id":           externalID,
 						"name":         title,
 						"description":  description,
-						"price":        fmt.Sprintf("%.2f %s", price, currency),
+						"price":        fmt.Sprintf("%s %s", func() string { if price.Valid { return fmt.Sprintf("%.2f", price.Float64) }; return "0.00" }(), currency),
 						"sku":          sku,
 						"brand":        brand,
 						"category":     category,
@@ -3700,7 +3704,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"id":           externalID,
 						"name":         title,
 						"description":  description,
-						"price":        fmt.Sprintf("%.2f %s", price, currency),
+						"price":        fmt.Sprintf("%s %s", func() string { if price.Valid { return fmt.Sprintf("%.2f", price.Float64) }; return "0.00" }(), currency),
 						"sku":          sku,
 						"brand":        brand,
 						"category":     category,
