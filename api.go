@@ -3320,8 +3320,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Basic SEO Enhancement (can be enhanced with AI later)
+				fmt.Printf("🔍 SEO Enhancement Debug - Title: %s, Description: %s, Brand: %s, Category: %s\n", title, description, brand, category)
+
 				var existingMetadata map[string]interface{}
 				if err := json.Unmarshal([]byte(enhancedMetadata), &existingMetadata); err == nil {
+					fmt.Printf("🔍 SEO Enhancement Debug - Existing metadata: %+v\n", existingMetadata)
+
 					// Add basic SEO enhancements
 					if existingMetadata["seo_title"] == "" {
 						existingMetadata["seo_title"] = title
@@ -3341,7 +3345,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					// Convert back to JSON
 					if enhancedBytes, err := json.Marshal(existingMetadata); err == nil {
 						enhancedMetadata = string(enhancedBytes)
+						fmt.Printf("🔍 SEO Enhancement Debug - Enhanced metadata: %s\n", enhancedMetadata)
 					}
+				} else {
+					fmt.Printf("🔍 SEO Enhancement Debug - Error parsing metadata: %v\n", err)
 				}
 
 				// Insert product (let database generate UUID for id)
@@ -3358,9 +3365,56 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				c.JSON(http.StatusCreated, gin.H{
-					"message":     "Product created successfully",
-					"id":          generatedID,
-					"external_id": externalID,
+					"message":      "Product created successfully",
+					"id":           generatedID,
+					"external_id":  externalID,
+					"seo_enhanced": true,
+				})
+			})
+
+			// Get available connectors for product creation
+			products.GET("/connectors", func(c *gin.Context) {
+				// Add CORS headers
+				c.Header("Access-Control-Allow-Origin", "*")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+				rows, err := db.Query(`
+					SELECT id, name, type, status, shop_domain, created_at, last_sync
+					FROM connectors 
+					ORDER BY created_at DESC
+				`)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query connectors"})
+					return
+				}
+				defer rows.Close()
+
+				var connectors []map[string]interface{}
+				for rows.Next() {
+					var id, name, connectorType, status, shopDomain string
+					var createdAt time.Time
+					var lastSync sql.NullTime
+
+					err := rows.Scan(&id, &name, &connectorType, &status, &shopDomain, &createdAt, &lastSync)
+					if err != nil {
+						continue
+					}
+
+					connectors = append(connectors, map[string]interface{}{
+						"id":          id,
+						"name":        name,
+						"type":        connectorType,
+						"status":      status,
+						"shop_domain": shopDomain,
+						"created_at":  createdAt,
+						"last_sync":   lastSync,
+					})
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"connectors": connectors,
+					"message":    "Available connectors retrieved successfully",
 				})
 			})
 
