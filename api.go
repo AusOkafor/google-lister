@@ -3223,11 +3223,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					externalID = providedExternalId
 				}
 
-				// Prepare JSON fields
-				var imagesJSON string
+				// Prepare images as PostgreSQL array
+				var imagesArray []string
 				if images, ok := productData["images"]; ok {
-					if imagesBytes, err := json.Marshal(images); err == nil {
-						imagesJSON = string(imagesBytes)
+					if imagesSlice, ok := images.([]interface{}); ok {
+						for _, img := range imagesSlice {
+							if imgStr, ok := img.(string); ok {
+								imagesArray = append(imagesArray, imgStr)
+							}
+						}
 					}
 				}
 
@@ -3252,10 +3256,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
-				var customLabelsJSON string
+				// Prepare custom_labels as PostgreSQL array
+				var customLabelsArray []string
 				if customLabels, ok := productData["custom_labels"]; ok {
-					if customLabelsBytes, err := json.Marshal(customLabels); err == nil {
-						customLabelsJSON = string(customLabelsBytes)
+					if customLabelsSlice, ok := customLabels.([]interface{}); ok {
+						for _, label := range customLabelsSlice {
+							if labelStr, ok := label.(string); ok {
+								customLabelsArray = append(customLabelsArray, labelStr)
+							}
+						}
 					}
 				}
 
@@ -3294,7 +3303,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				INSERT INTO products (external_id, title, description, price, currency, sku, gtin, brand, category, images, variants, metadata, shipping, custom_labels, status, created_at, updated_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
 				RETURNING id
-			`, externalID, title, description, price, currency, sku, gtin, brand, category, imagesJSON, variantsJSON, metadataJSON, shippingJSON, customLabelsJSON, "ACTIVE").Scan(&generatedID)
+			`, externalID, title, description, price, currency, sku, gtin, brand, category, imagesArray, variantsJSON, metadataJSON, shippingJSON, customLabelsArray, "ACTIVE").Scan(&generatedID)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product: " + err.Error()})
