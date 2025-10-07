@@ -3357,7 +3357,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					if existingMetadata["alt_text"] == "" {
 						existingMetadata["alt_text"] = fmt.Sprintf("%s - %s product from %s", title, category, brand)
 					}
-					if existingMetadata["keywords"] == nil || len(existingMetadata["keywords"].([]string)) == 0 {
+					if existingMetadata["keywords"] == nil {
+						existingMetadata["keywords"] = []string{title, "", brand, "online shopping", "buy online"}
+					} else if keywordsSlice, ok := existingMetadata["keywords"].([]string); !ok || len(keywordsSlice) == 0 {
 						existingMetadata["keywords"] = []string{title, "", brand, "online shopping", "buy online"}
 					}
 					if existingMetadata["meta_keywords"] == "" {
