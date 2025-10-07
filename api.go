@@ -271,7 +271,6 @@ func initDB() error {
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 			UNIQUE(connector_id, external_id)
 		);`,
-		`ALTER TABLE products ADD CONSTRAINT IF NOT EXISTS products_connector_external_unique UNIQUE(connector_id, external_id);`,
 		`CREATE TABLE IF NOT EXISTS feed_variants (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			product_id UUID REFERENCES products(id),
