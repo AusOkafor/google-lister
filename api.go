@@ -3224,9 +3224,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Get connector_id (optional - for linking to Shopify store)
-				connectorID := ""
+				var connectorID sql.NullString
 				if providedConnectorId, ok := productData["connector_id"].(string); ok && providedConnectorId != "" {
-					connectorID = providedConnectorId
+					connectorID = sql.NullString{String: providedConnectorId, Valid: true}
 				}
 
 				// Prepare images as PostgreSQL array
@@ -3303,13 +3303,54 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Note: mpn, availability, and tax_class are accepted from frontend but not stored in database
 				// since these columns don't exist in the current schema
 
+				// AI-Powered SEO Enhancement
+				enhancedMetadata := metadataJSON
+				if metadataJSON == "" {
+					// Create basic metadata structure for SEO enhancement
+					basicMetadata := map[string]interface{}{
+						"seo_title":       "",
+						"seo_description": "",
+						"keywords":        []string{},
+						"alt_text":        "",
+						"seo_enhanced":    false,
+					}
+					if basicBytes, err := json.Marshal(basicMetadata); err == nil {
+						enhancedMetadata = string(basicBytes)
+					}
+				}
+
+				// Basic SEO Enhancement (can be enhanced with AI later)
+				var existingMetadata map[string]interface{}
+				if err := json.Unmarshal([]byte(enhancedMetadata), &existingMetadata); err == nil {
+					// Add basic SEO enhancements
+					if existingMetadata["seo_title"] == "" {
+						existingMetadata["seo_title"] = title
+					}
+					if existingMetadata["seo_description"] == "" {
+						existingMetadata["seo_description"] = description
+					}
+					if existingMetadata["alt_text"] == "" {
+						existingMetadata["alt_text"] = fmt.Sprintf("%s - %s product from %s", title, category, brand)
+					}
+					if existingMetadata["schema_markup"] == "" {
+						existingMetadata["schema_markup"] = fmt.Sprintf(`{"@context":"https://schema.org","@type":"Product","name":"%s","description":"%s","brand":{"@type":"Brand","name":"%s"},"category":"%s"}`, title, description, brand, category)
+					}
+					existingMetadata["seo_enhanced"] = true
+					existingMetadata["seo_enhanced_at"] = time.Now().Format(time.RFC3339)
+
+					// Convert back to JSON
+					if enhancedBytes, err := json.Marshal(existingMetadata); err == nil {
+						enhancedMetadata = string(enhancedBytes)
+					}
+				}
+
 				// Insert product (let database generate UUID for id)
 				var generatedID string
 				err = db.QueryRow(`
 				INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, gtin, brand, category, images, variants, metadata, shipping, custom_labels, status, created_at, updated_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
 				RETURNING id
-			`, connectorID, externalID, title, description, price, currency, sku, gtin, brand, category, pq.Array(imagesArray), variantsJSON, metadataJSON, shippingJSON, pq.Array(customLabelsArray), "ACTIVE").Scan(&generatedID)
+			`, connectorID, externalID, title, description, price, currency, sku, gtin, brand, category, pq.Array(imagesArray), variantsJSON, enhancedMetadata, shippingJSON, pq.Array(customLabelsArray), "ACTIVE").Scan(&generatedID)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product: " + err.Error()})
