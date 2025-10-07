@@ -2926,7 +2926,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				c.AbortWithStatus(204)
 			})
 			// List all products with pagination and filtering
-			products.GET("/", func(c *gin.Context) {
+			products.GET("", func(c *gin.Context) {
 				// Add CORS headers directly to this endpoint
 				c.Header("Access-Control-Allow-Origin", "*")
 				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -3198,7 +3198,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			})
 
 			// Create new product
-			products.POST("/", func(c *gin.Context) {
+			products.POST("", func(c *gin.Context) {
 				// Add CORS headers
 				c.Header("Access-Control-Allow-Origin", "*")
 				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
