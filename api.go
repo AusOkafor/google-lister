@@ -22,6 +22,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lib/pq"
 	"github.com/rs/cors"
+	"github.com/supabase-community/supabase-go"
 )
 
 // In-memory storage for connectors (for demo purposes)
@@ -3657,10 +3658,45 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					ext := filepath.Ext(file.Filename)
 					filename := fmt.Sprintf("product_%d_%s%s", time.Now().UnixNano(), generateRandomString(8), ext)
 
-					// For Vercel serverless, we can't store files locally
-					// Return a working placeholder image URL
-					// In production, you'd upload to AWS S3, Cloudinary, or similar service
-					imageUrl := fmt.Sprintf("https://picsum.photos/400/300?random=%d", time.Now().UnixNano())
+					// Upload to Supabase Storage
+					supabaseURL := os.Getenv("SUPABASE_URL")
+					supabaseKey := os.Getenv("SUPABASE_ANON_KEY")
+
+					var imageUrl string
+					if supabaseURL != "" && supabaseKey != "" {
+						// Initialize Supabase client
+						client, err := supabase.NewClient(supabaseURL, supabaseKey, nil)
+						if err != nil {
+							fmt.Printf("Error creating Supabase client: %v\n", err)
+							// Fallback to placeholder
+							imageUrl = fmt.Sprintf("https://picsum.photos/400/300?random=%d", time.Now().UnixNano())
+						} else {
+							// Read file content
+							src, err := file.Open()
+							if err != nil {
+								fmt.Printf("Error opening file: %v\n", err)
+								imageUrl = fmt.Sprintf("https://picsum.photos/400/300?random=%d", time.Now().UnixNano())
+							} else {
+								defer src.Close()
+
+								// Upload to Supabase Storage
+								filePath := fmt.Sprintf("products/%s", filename)
+								_, err := client.Storage.From("product-images").Upload(filePath, src, nil)
+								if err != nil {
+									fmt.Printf("Error uploading to Supabase: %v\n", err)
+									// Fallback to placeholder
+									imageUrl = fmt.Sprintf("https://picsum.photos/400/300?random=%d", time.Now().UnixNano())
+								} else {
+									// Get public URL
+									imageUrl = fmt.Sprintf("%s/storage/v1/object/public/product-images/%s", supabaseURL, filePath)
+								}
+							}
+						}
+					} else {
+						// No Supabase config, use placeholder
+						imageUrl = fmt.Sprintf("https://picsum.photos/400/300?random=%d", time.Now().UnixNano())
+					}
+
 					imageUrls = append(imageUrls, imageUrl)
 
 					// Log the upload (in production, save to actual storage)
