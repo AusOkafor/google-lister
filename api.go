@@ -3679,9 +3679,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							} else {
 								defer src.Close()
 
-								// Upload to Supabase Storage
+								// Upload to Supabase Storage using the correct API
 								filePath := fmt.Sprintf("products/%s", filename)
-								_, err := client.Storage.From("product-images").Upload(filePath, src, nil)
+								_, err = client.Storage.UploadFile("product-images", filePath, src)
 								if err != nil {
 									fmt.Printf("Error uploading to Supabase: %v\n", err)
 									// Fallback to placeholder
