@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"crypto/hmac"
@@ -338,10 +338,12 @@ func initDB() error {
 	}
 
 	// Execute all table creation statements
-	for _, tableSQL := range tables {
+	for i, tableSQL := range tables {
 		_, err = db.Exec(tableSQL)
 		if err != nil {
-			return fmt.Errorf("failed to create table: %v", err)
+			fmt.Printf("[ERROR] Failed to create table %d: %v\n", i, err)
+			fmt.Printf("[ERROR] SQL: %s\n", tableSQL)
+			return fmt.Errorf("failed to create table %d: %v", i, err)
 		}
 	}
 
@@ -738,7 +740,7 @@ func callOpenRouterAI(prompt string, maxTokens int, temperature float64) (string
 	}
 
 	// Log the API call for debugging
-	fmt.Printf("🤖 AI API Call: %s\n", prompt[:min(50, len(prompt))])
+	fmt.Printf("ðŸ¤– AI API Call: %s\n", prompt[:min(50, len(prompt))])
 
 	request := OpenRouterRequest{
 		Model:       OPENROUTER_MODEL,
@@ -809,14 +811,14 @@ func optimizeProductTitle(title, description, brand, category, keywords string, 
 	// Try AI optimization first
 	aiTitle, err := optimizeTitleWithAI(title, description, brand, category, keywords, maxLength)
 	if err == nil && aiTitle != "" {
-		fmt.Printf("✅ AI Title Optimization: %s\n", aiTitle)
+		fmt.Printf("âœ… AI Title Optimization: %s\n", aiTitle)
 		return aiTitle
 	}
 
 	// Fallback to rule-based optimization
-	fmt.Printf("⚠️ AI Failed, using fallback: %s\n", err)
+	fmt.Printf("âš ï¸ AI Failed, using fallback: %s\n", err)
 	ruleTitle := optimizeTitleWithRules(title, description, brand, category, keywords, maxLength)
-	fmt.Printf("📝 Rule-based Title: %s\n", ruleTitle)
+	fmt.Printf("ðŸ“ Rule-based Title: %s\n", ruleTitle)
 	return ruleTitle
 }
 
@@ -850,23 +852,23 @@ Better: "Men's Cotton Oxford Blue Dress Shirt - Business Casual"
 
 Based on the description "%s", create a title that describes what the product actually is and why customers should buy it. Return ONLY the optimized title:`, title, description, brand, category, keywords, maxLength, description)
 
-	fmt.Printf("🤖 AI Input - Title: '%s', Description: '%s', Brand: '%s'\n", title, description, brand)
+	fmt.Printf("ðŸ¤– AI Input - Title: '%s', Description: '%s', Brand: '%s'\n", title, description, brand)
 
 	aiTitle, err := callOpenRouterAI(prompt, 50, 0.7)
 	if err != nil {
-		fmt.Printf("❌ AI Error: %v\n", err)
+		fmt.Printf("âŒ AI Error: %v\n", err)
 		return "", err
 	}
 
 	// Clean and validate AI response
 	aiTitle = strings.TrimSpace(aiTitle)
-	fmt.Printf("🤖 AI Raw Response: '%s'\n", aiTitle)
+	fmt.Printf("ðŸ¤– AI Raw Response: '%s'\n", aiTitle)
 
 	if len(aiTitle) > maxLength {
 		aiTitle = aiTitle[:maxLength-3] + "..."
 	}
 
-	fmt.Printf("✅ AI Final Title: '%s'\n", aiTitle)
+	fmt.Printf("âœ… AI Final Title: '%s'\n", aiTitle)
 	return aiTitle, nil
 }
 
@@ -989,16 +991,16 @@ func enhanceDescriptionWithRules(title, description, brand, category string, pri
 	// Add compelling opening based on style
 	switch style {
 	case "marketing":
-		enhanced.WriteString("🌟 ")
+		enhanced.WriteString("ðŸŒŸ ")
 		if brand != "" {
 			enhanced.WriteString(fmt.Sprintf("Discover the premium %s ", brand))
 		}
 		enhanced.WriteString(fmt.Sprintf("%s - ", title))
 	case "technical":
-		enhanced.WriteString("🔧 ")
+		enhanced.WriteString("ðŸ”§ ")
 		enhanced.WriteString(fmt.Sprintf("Technical specifications for %s: ", title))
 	case "casual":
-		enhanced.WriteString("✨ ")
+		enhanced.WriteString("âœ¨ ")
 		enhanced.WriteString(fmt.Sprintf("Love this %s! ", title))
 	}
 
@@ -1021,11 +1023,11 @@ func enhanceDescriptionWithRules(title, description, brand, category string, pri
 	// Add call to action based on style
 	switch style {
 	case "marketing":
-		enhanced.WriteString(" 🛒 Shop now and experience the difference!")
+		enhanced.WriteString(" ðŸ›’ Shop now and experience the difference!")
 	case "technical":
-		enhanced.WriteString(" 📊 Ideal for professionals and enthusiasts.")
+		enhanced.WriteString(" ðŸ“Š Ideal for professionals and enthusiasts.")
 	case "casual":
-		enhanced.WriteString(" 😍 You'll love it!")
+		enhanced.WriteString(" ðŸ˜ You'll love it!")
 	}
 
 	return enhanced.String()
@@ -1343,7 +1345,7 @@ func calculateDescriptionImprovement(original, enhanced string) map[string]inter
 
 	// Check for engagement improvements
 	engagementScore := 0
-	if strings.Contains(enhanced, "🌟") || strings.Contains(enhanced, "✨") {
+	if strings.Contains(enhanced, "ðŸŒŸ") || strings.Contains(enhanced, "âœ¨") {
 		engagementScore += 20
 	}
 	if strings.Contains(enhanced, "!") {
@@ -1386,7 +1388,7 @@ func calculateReadabilityScore(description string) int {
 	if strings.Contains(description, "!") {
 		score += 15
 	}
-	if strings.Contains(description, "🌟") || strings.Contains(description, "✨") {
+	if strings.Contains(description, "ðŸŒŸ") || strings.Contains(description, "âœ¨") {
 		score += 10
 	}
 
@@ -1741,7 +1743,7 @@ func processProductUpdate(product ShopifyProduct, shopDomain, topic string) map[
 	// Transform Shopify product to our format
 	transformedProduct := transformShopifyProduct(product, shopDomain, make(map[int64]int))
 
-	// 🚀 AI-POWERED SEO ENHANCEMENT
+	// ðŸš€ AI-POWERED SEO ENHANCEMENT
 	seoEnhancement := enhanceProductSEO(product)
 
 	// Create enhanced metadata with SEO data
@@ -1808,7 +1810,7 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 	// Transform Shopify product to our format
 	transformedProduct := transformShopifyProduct(product, shopDomain, make(map[int64]int))
 
-	// 🚀 AI-POWERED SEO ENHANCEMENT
+	// ðŸš€ AI-POWERED SEO ENHANCEMENT
 	seoEnhancement := enhanceProductSEO(product)
 
 	// Create enhanced metadata with SEO data
@@ -2394,9 +2396,30 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	// Health check endpoint
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(200, gin.H{
-			"message": "Lister API is running",
-			"status":  "healthy",
-			"version": "1.0.0",
+			"message":   "Lister API is running",
+			"status":    "healthy",
+			"version":   "1.0.0",
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	})
+
+	// Simple health check that doesn't require database
+	router.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status":             "healthy",
+			"database_connected": db != nil,
+			"timestamp":          time.Now().Format(time.RFC3339),
+		})
+	})
+
+	// Environment check endpoint
+	router.GET("/env-check", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"database_url_set":          os.Getenv("DATABASE_URL") != "",
+			"shopify_client_id_set":     os.Getenv("SHOPIFY_CLIENT_ID") != "",
+			"shopify_client_secret_set": os.Getenv("SHOPIFY_CLIENT_SECRET") != "",
+			"openrouter_api_key_set":    os.Getenv("OPENROUTER_API_KEY") != "",
+			"timestamp":                 time.Now().Format(time.RFC3339),
 		})
 	})
 
@@ -2523,7 +2546,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					<html>
 					<head><title>Database Error</title></head>
 					<body>
-						<h2>❌ Installation Failed</h2>
+						<h2>âŒ Installation Failed</h2>
 						<p>Failed to save connector to database.</p>
 					</body>
 					</html>
@@ -2538,7 +2561,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				<html>
 				<head><title>Installation Successful</title></head>
 				<body>
-					<h2>✅ Lister App Installed Successfully!</h2>
+					<h2>âœ… Lister App Installed Successfully!</h2>
 					<p><strong>Shop:</strong> %s</p>
 					<p><strong>Status:</strong> Connected</p>
 					<p><strong>Connector ID:</strong> %s</p>
@@ -4151,320 +4174,6 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					})
 				})
 			}
-
-			// Create new product
-			products.POST("/", func(c *gin.Context) {
-				// Add CORS headers
-				c.Header("Access-Control-Allow-Origin", "*")
-				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-				var productData map[string]interface{}
-				if err := c.ShouldBindJSON(&productData); err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-					return
-				}
-
-				// Extract and validate required fields
-				title, ok := productData["title"].(string)
-				if !ok || title == "" {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
-					return
-				}
-
-				price, ok := productData["price"].(float64)
-				if !ok {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "price is required and must be a number"})
-					return
-				}
-
-				// Generate SKU and external_id if not provided
-				sku, ok := productData["sku"].(string)
-				if !ok || sku == "" {
-					sku = "SKU-" + strconv.FormatInt(time.Now().Unix(), 10)
-				}
-
-				externalID, ok := productData["external_id"].(string)
-				if !ok || externalID == "" {
-					externalID = "EXT-" + strconv.FormatInt(time.Now().Unix(), 10)
-				}
-
-				// Prepare data for insertion
-				currency := "USD"
-				if c, ok := productData["currency"].(string); ok && c != "" {
-					currency = c
-				}
-
-				availability := "IN_STOCK"
-				if a, ok := productData["availability"].(string); ok && a != "" {
-					availability = a
-				}
-
-				// Handle optional fields
-				var description, brand, gtin, mpn, category, taxClass *string
-				if d, ok := productData["description"].(string); ok && d != "" {
-					description = &d
-				}
-				if b, ok := productData["brand"].(string); ok && b != "" {
-					brand = &b
-				}
-				if g, ok := productData["gtin"].(string); ok && g != "" {
-					gtin = &g
-				}
-				if m, ok := productData["mpn"].(string); ok && m != "" {
-					mpn = &m
-				}
-				if cat, ok := productData["category"].(string); ok && cat != "" {
-					category = &cat
-				}
-				if tc, ok := productData["tax_class"].(string); ok && tc != "" {
-					taxClass = &tc
-				}
-
-				// Handle JSON fields
-				var imagesJSON, variantsJSON, shippingJSON, customLabelsJSON, metadataJSON string
-
-				if imgs, ok := productData["images"].([]interface{}); ok && len(imgs) > 0 {
-					imgStrs := make([]string, len(imgs))
-					for i, img := range imgs {
-						if imgStr, ok := img.(string); ok {
-							imgStrs[i] = imgStr
-						}
-					}
-					imagesJSON = "{" + strings.Join(imgStrs, ",") + "}"
-				}
-
-				if vars, ok := productData["variants"].([]interface{}); ok && len(vars) > 0 {
-					if variantsBytes, err := json.Marshal(vars); err == nil {
-						variantsJSON = string(variantsBytes)
-					}
-				}
-
-				if ship, ok := productData["shipping"]; ok && ship != nil {
-					if shippingBytes, err := json.Marshal(ship); err == nil {
-						shippingJSON = string(shippingBytes)
-					}
-				}
-
-				if labels, ok := productData["custom_labels"].([]interface{}); ok && len(labels) > 0 {
-					labelStrs := make([]string, len(labels))
-					for i, label := range labels {
-						if labelStr, ok := label.(string); ok {
-							labelStrs[i] = labelStr
-						}
-					}
-					customLabelsJSON = "{" + strings.Join(labelStrs, ",") + "}"
-				}
-
-				if meta, ok := productData["metadata"]; ok && meta != nil {
-					if metadataBytes, err := json.Marshal(meta); err == nil {
-						metadataJSON = string(metadataBytes)
-					}
-				}
-
-				// Insert product into database
-				query := `INSERT INTO products (external_id, sku, title, description, brand, gtin, mpn, category, price, currency, availability, images, variants, shipping, tax_class, custom_labels, metadata, created_at, updated_at) 
-					  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW()) 
-					  RETURNING id`
-
-				var productID string
-				err := db.QueryRow(query, externalID, sku, title, description, brand, gtin, mpn, category, price, currency, availability, imagesJSON, variantsJSON, shippingJSON, taxClass, customLabelsJSON, metadataJSON).Scan(&productID)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product: " + err.Error()})
-					return
-				}
-
-				// Return created product
-				product := map[string]interface{}{
-					"id":           productID,
-					"external_id":  externalID,
-					"sku":          sku,
-					"title":        title,
-					"price":        price,
-					"currency":     currency,
-					"availability": availability,
-					"created_at":   time.Now().Format(time.RFC3339),
-					"updated_at":   time.Now().Format(time.RFC3339),
-				}
-
-				if description != nil {
-					product["description"] = *description
-				}
-				if brand != nil {
-					product["brand"] = *brand
-				}
-				if gtin != nil {
-					product["gtin"] = *gtin
-				}
-				if mpn != nil {
-					product["mpn"] = *mpn
-				}
-				if category != nil {
-					product["category"] = *category
-				}
-				if taxClass != nil {
-					product["tax_class"] = *taxClass
-				}
-				if imagesJSON != "" {
-					product["images"] = imagesJSON
-				}
-				if variantsJSON != "" {
-					product["variants"] = variantsJSON
-				}
-				if shippingJSON != "" {
-					product["shipping"] = shippingJSON
-				}
-				if customLabelsJSON != "" {
-					product["custom_labels"] = customLabelsJSON
-				}
-				if metadataJSON != "" {
-					product["metadata"] = metadataJSON
-				}
-
-				c.JSON(http.StatusCreated, gin.H{"data": product})
-			})
-
-			// Update existing product
-			products.PUT("/:id", func(c *gin.Context) {
-				// Add CORS headers
-				c.Header("Access-Control-Allow-Origin", "*")
-				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-				id := c.Param("id")
-
-				var productData map[string]interface{}
-				if err := c.ShouldBindJSON(&productData); err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-					return
-				}
-
-				// Check if product exists
-				var exists bool
-				err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM products WHERE id = $1)", id).Scan(&exists)
-				if err != nil || !exists {
-					c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
-					return
-				}
-
-				// Build update query dynamically
-				setParts := []string{}
-				args := []interface{}{}
-				argIndex := 1
-
-				// Handle each field
-				if title, ok := productData["title"].(string); ok {
-					setParts = append(setParts, "title = $"+strconv.Itoa(argIndex))
-					args = append(args, title)
-					argIndex++
-				}
-				if description, ok := productData["description"].(string); ok {
-					setParts = append(setParts, "description = $"+strconv.Itoa(argIndex))
-					args = append(args, description)
-					argIndex++
-				}
-				if brand, ok := productData["brand"].(string); ok {
-					setParts = append(setParts, "brand = $"+strconv.Itoa(argIndex))
-					args = append(args, brand)
-					argIndex++
-				}
-				if category, ok := productData["category"].(string); ok {
-					setParts = append(setParts, "category = $"+strconv.Itoa(argIndex))
-					args = append(args, category)
-					argIndex++
-				}
-				if price, ok := productData["price"].(float64); ok {
-					setParts = append(setParts, "price = $"+strconv.Itoa(argIndex))
-					args = append(args, price)
-					argIndex++
-				}
-				if currency, ok := productData["currency"].(string); ok {
-					setParts = append(setParts, "currency = $"+strconv.Itoa(argIndex))
-					args = append(args, currency)
-					argIndex++
-				}
-				if availability, ok := productData["availability"].(string); ok {
-					setParts = append(setParts, "availability = $"+strconv.Itoa(argIndex))
-					args = append(args, availability)
-					argIndex++
-				}
-
-				// Handle JSON fields
-				if imgs, ok := productData["images"].([]interface{}); ok {
-					imgStrs := make([]string, len(imgs))
-					for i, img := range imgs {
-						if imgStr, ok := img.(string); ok {
-							imgStrs[i] = imgStr
-						}
-					}
-					setParts = append(setParts, "images = $"+strconv.Itoa(argIndex))
-					args = append(args, "{"+strings.Join(imgStrs, ",")+"}")
-					argIndex++
-				}
-
-				if vars, ok := productData["variants"].([]interface{}); ok {
-					if variantsBytes, err := json.Marshal(vars); err == nil {
-						setParts = append(setParts, "variants = $"+strconv.Itoa(argIndex))
-						args = append(args, string(variantsBytes))
-						argIndex++
-					}
-				}
-
-				if meta, ok := productData["metadata"]; ok {
-					if metadataBytes, err := json.Marshal(meta); err == nil {
-						setParts = append(setParts, "metadata = $"+strconv.Itoa(argIndex))
-						args = append(args, string(metadataBytes))
-						argIndex++
-					}
-				}
-
-				if len(setParts) == 0 {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "No valid fields to update"})
-					return
-				}
-
-				setParts = append(setParts, "updated_at = NOW()")
-				args = append(args, id)
-
-				query := "UPDATE products SET " + strings.Join(setParts, ", ") + " WHERE id = $" + strconv.Itoa(argIndex)
-
-				_, err = db.Exec(query, args...)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update product: " + err.Error()})
-					return
-				}
-
-				c.JSON(http.StatusOK, gin.H{"message": "Product updated successfully"})
-			})
-
-			// Delete product
-			products.DELETE("/:id", func(c *gin.Context) {
-				// Add CORS headers
-				c.Header("Access-Control-Allow-Origin", "*")
-				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-				id := c.Param("id")
-
-				result, err := db.Exec("DELETE FROM products WHERE id = $1", id)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete product"})
-					return
-				}
-
-				rowsAffected, err := result.RowsAffected()
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete product"})
-					return
-				}
-
-				if rowsAffected == 0 {
-					c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
-					return
-				}
-
-				c.Status(http.StatusNoContent)
-			})
 		}
 
 		// Connectors
@@ -4598,18 +4307,18 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// 🚀 AUTOMATIC WEBHOOK SETUP - No manual configuration needed!
+				// ðŸš€ AUTOMATIC WEBHOOK SETUP - No manual configuration needed!
 				webhookResults := setupAutomaticWebhooks(shop, accessToken)
 
 				// Log webhook setup results
-				fmt.Printf("🔗 Webhook Setup Results for %s:\n", shop)
+				fmt.Printf("ðŸ”— Webhook Setup Results for %s:\n", shop)
 				successCount := 0
 				for topic, result := range webhookResults {
 					if result["success"].(bool) {
-						fmt.Printf("✅ %s: %s\n", topic, result["message"])
+						fmt.Printf("âœ… %s: %s\n", topic, result["message"])
 						successCount++
 					} else {
-						fmt.Printf("❌ %s: %s\n", topic, result["message"])
+						fmt.Printf("âŒ %s: %s\n", topic, result["message"])
 					}
 				}
 
@@ -4712,10 +4421,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					// Transform product (Shopify should include inventory data by default)
 					transformedProduct := transformShopifyProduct(product, connector.ShopDomain, make(map[int64]int))
 
-					// 🚀 AI-POWERED SEO ENHANCEMENT
-					fmt.Printf("🔍 Enhancing SEO for product: %s\n", product.Title)
+					// ðŸš€ AI-POWERED SEO ENHANCEMENT
+					fmt.Printf("ðŸ” Enhancing SEO for product: %s\n", product.Title)
 					seoEnhancement := enhanceProductSEO(product)
-					fmt.Printf("🔍 SEO Enhancement result: %+v\n", seoEnhancement)
+					fmt.Printf("ðŸ” SEO Enhancement result: %+v\n", seoEnhancement)
 
 					// Create enhanced metadata with SEO data
 					enhancedMetadata := map[string]interface{}{
@@ -4731,13 +4440,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 					// Convert enhanced metadata to JSON
 					enhancedMetadataJSON, _ := json.Marshal(enhancedMetadata)
-					fmt.Printf("🔍 Enhanced metadata JSON: %s\n", string(enhancedMetadataJSON))
+					fmt.Printf("ðŸ” Enhanced metadata JSON: %s\n", string(enhancedMetadataJSON))
 
 					// Convert Go slice to PostgreSQL array format for images
 					imageURLsArray := "{" + strings.Join(transformedProduct.Images, ",") + "}"
 
 					// Try upsert first, fallback to check-and-insert if constraint doesn't exist
-					fmt.Printf("🔍 About to insert/update product with metadata length: %d\n", len(string(enhancedMetadataJSON)))
+					fmt.Printf("ðŸ” About to insert/update product with metadata length: %d\n", len(string(enhancedMetadataJSON)))
 					_, err := db.Exec(`
 						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, updated_at)
 						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
@@ -4761,9 +4470,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
 
 					if err != nil {
-						fmt.Printf("🔍 Database error: %v\n", err)
+						fmt.Printf("ðŸ” Database error: %v\n", err)
 					} else {
-						fmt.Printf("🔍 Product successfully updated with SEO metadata\n")
+						fmt.Printf("ðŸ” Product successfully updated with SEO metadata\n")
 					}
 
 					// If upsert fails due to missing constraint, fallback to check-and-insert
@@ -4777,7 +4486,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 						if checkErr == nil {
 							// Product exists, update it
-							fmt.Printf("🔍 Updating existing product %s with metadata length: %d\n", existingID, len(string(enhancedMetadataJSON)))
+							fmt.Printf("ðŸ” Updating existing product %s with metadata length: %d\n", existingID, len(string(enhancedMetadataJSON)))
 							_, err = db.Exec(`
 								UPDATE products SET 
 									title = $1, description = $2, price = $3, currency = $4, 
@@ -4789,9 +4498,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 								transformedProduct.Category, imageURLsArray, transformedProduct.Variants,
 								string(enhancedMetadataJSON), "ACTIVE", existingID)
 							if err != nil {
-								fmt.Printf("🔍 Update error: %v\n", err)
+								fmt.Printf("ðŸ” Update error: %v\n", err)
 							} else {
-								fmt.Printf("🔍 Product updated successfully\n")
+								fmt.Printf("ðŸ” Product updated successfully\n")
 							}
 						} else {
 							// Product doesn't exist, insert it
