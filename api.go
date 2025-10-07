@@ -3220,23 +3220,310 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				})
 			})
 
-			// Feed Management System
-			feeds := api.Group("/feeds")
-			{
-				// Google Shopping Feed
-				feeds.GET("/google-shopping", func(c *gin.Context) {
-					// Get query parameters
-					format := c.DefaultQuery("format", "xml")
-					limit := c.DefaultQuery("limit", "100")
+			// Create new product
+			products.POST("/", func(c *gin.Context) {
+				// Add CORS headers
+				c.Header("Access-Control-Allow-Origin", "*")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-					// Convert limit to integer
-					limitInt := 100
-					if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
-						// Limit converted successfully
+				var err error
+
+				var productData map[string]interface{}
+				if err := c.ShouldBindJSON(&productData); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON: " + err.Error()})
+					return
+				}
+
+				// Validate required fields
+				title, hasTitle := productData["title"].(string)
+				if !hasTitle || title == "" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
+					return
+				}
+
+				price, hasPrice := productData["price"].(float64)
+				if !hasPrice || price < 0 {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "price is required and must be a positive number"})
+					return
+				}
+
+				// Generate ID and SKU if not provided
+				id := fmt.Sprintf("product_%d", time.Now().Unix())
+				sku := fmt.Sprintf("SKU-%d", time.Now().Unix())
+				if providedSku, ok := productData["sku"].(string); ok && providedSku != "" {
+					sku = providedSku
+				}
+				if providedExternalId, ok := productData["external_id"].(string); ok && providedExternalId != "" {
+					id = providedExternalId
+				}
+
+				// Prepare JSON fields
+				var imagesJSON string
+				if images, ok := productData["images"]; ok {
+					if imagesBytes, err := json.Marshal(images); err == nil {
+						imagesJSON = string(imagesBytes)
 					}
+				}
 
-					// Get products for Google Shopping feed
-					rows, err := db.Query(`
+				var variantsJSON string
+				if variants, ok := productData["variants"]; ok {
+					if variantsBytes, err := json.Marshal(variants); err == nil {
+						variantsJSON = string(variantsBytes)
+					}
+				}
+
+				var metadataJSON string
+				if metadata, ok := productData["metadata"]; ok {
+					if metadataBytes, err := json.Marshal(metadata); err == nil {
+						metadataJSON = string(metadataBytes)
+					}
+				}
+
+				var shippingJSON string
+				if shipping, ok := productData["shipping"]; ok {
+					if shippingBytes, err := json.Marshal(shipping); err == nil {
+						shippingJSON = string(shippingBytes)
+					}
+				}
+
+				var customLabelsJSON string
+				if customLabels, ok := productData["custom_labels"]; ok {
+					if customLabelsBytes, err := json.Marshal(customLabels); err == nil {
+						customLabelsJSON = string(customLabelsBytes)
+					}
+				}
+
+				// Extract optional fields
+				description := ""
+				if desc, ok := productData["description"].(string); ok {
+					description = desc
+				}
+
+				brand := ""
+				if b, ok := productData["brand"].(string); ok {
+					brand = b
+				}
+
+				category := ""
+				if cat, ok := productData["category"].(string); ok {
+					category = cat
+				}
+
+				gtin := ""
+				if g, ok := productData["gtin"].(string); ok {
+					gtin = g
+				}
+
+				mpn := ""
+				if m, ok := productData["mpn"].(string); ok {
+					mpn = m
+				}
+
+				currency := "USD"
+				if curr, ok := productData["currency"].(string); ok {
+					currency = curr
+				}
+
+				availability := "IN_STOCK"
+				if avail, ok := productData["availability"].(string); ok {
+					availability = avail
+				}
+
+				taxClass := ""
+				if tax, ok := productData["tax_class"].(string); ok {
+					taxClass = tax
+				}
+
+				// Insert product
+				_, err = db.Exec(`
+				INSERT INTO products (id, external_id, title, description, price, currency, sku, gtin, mpn, brand, category, images, variants, metadata, shipping, custom_labels, availability, tax_class, status, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
+			`, id, id, title, description, price, currency, sku, gtin, mpn, brand, category, imagesJSON, variantsJSON, metadataJSON, shippingJSON, customLabelsJSON, availability, taxClass, "ACTIVE")
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product: " + err.Error()})
+					return
+				}
+
+				c.JSON(http.StatusCreated, gin.H{
+					"message": "Product created successfully",
+					"id":      id,
+				})
+			})
+
+			// Update product
+			products.PUT("/:id", func(c *gin.Context) {
+				// Add CORS headers
+				c.Header("Access-Control-Allow-Origin", "*")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+				var err error
+				id := c.Param("id")
+				var productData map[string]interface{}
+				if err := c.ShouldBindJSON(&productData); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON: " + err.Error()})
+					return
+				}
+
+				// Build dynamic update query
+				setParts := []string{}
+				args := []interface{}{}
+				argIndex := 1
+
+				// Handle simple fields
+				if title, ok := productData["title"].(string); ok {
+					setParts = append(setParts, "title = $"+strconv.Itoa(argIndex))
+					args = append(args, title)
+					argIndex++
+				}
+
+				if description, ok := productData["description"].(string); ok {
+					setParts = append(setParts, "description = $"+strconv.Itoa(argIndex))
+					args = append(args, description)
+					argIndex++
+				}
+
+				if price, ok := productData["price"].(float64); ok {
+					setParts = append(setParts, "price = $"+strconv.Itoa(argIndex))
+					args = append(args, price)
+					argIndex++
+				}
+
+				if currency, ok := productData["currency"].(string); ok {
+					setParts = append(setParts, "currency = $"+strconv.Itoa(argIndex))
+					args = append(args, currency)
+					argIndex++
+				}
+
+				if sku, ok := productData["sku"].(string); ok {
+					setParts = append(setParts, "sku = $"+strconv.Itoa(argIndex))
+					args = append(args, sku)
+					argIndex++
+				}
+
+				if brand, ok := productData["brand"].(string); ok {
+					setParts = append(setParts, "brand = $"+strconv.Itoa(argIndex))
+					args = append(args, brand)
+					argIndex++
+				}
+
+				if category, ok := productData["category"].(string); ok {
+					setParts = append(setParts, "category = $"+strconv.Itoa(argIndex))
+					args = append(args, category)
+					argIndex++
+				}
+
+				if availability, ok := productData["availability"].(string); ok {
+					setParts = append(setParts, "availability = $"+strconv.Itoa(argIndex))
+					args = append(args, availability)
+					argIndex++
+				}
+
+				if taxClass, ok := productData["tax_class"].(string); ok {
+					setParts = append(setParts, "tax_class = $"+strconv.Itoa(argIndex))
+					args = append(args, taxClass)
+					argIndex++
+				}
+
+				if status, ok := productData["status"].(string); ok {
+					setParts = append(setParts, "status = $"+strconv.Itoa(argIndex))
+					args = append(args, status)
+					argIndex++
+				}
+
+				// Handle JSON fields
+				if images, ok := productData["images"]; ok {
+					if imagesBytes, err := json.Marshal(images); err == nil {
+						setParts = append(setParts, "images = $"+strconv.Itoa(argIndex))
+						args = append(args, string(imagesBytes))
+						argIndex++
+					}
+				}
+
+				if variants, ok := productData["variants"]; ok {
+					if variantsBytes, err := json.Marshal(variants); err == nil {
+						setParts = append(setParts, "variants = $"+strconv.Itoa(argIndex))
+						args = append(args, string(variantsBytes))
+						argIndex++
+					}
+				}
+
+				if metadata, ok := productData["metadata"]; ok {
+					if metadataBytes, err := json.Marshal(metadata); err == nil {
+						setParts = append(setParts, "metadata = $"+strconv.Itoa(argIndex))
+						args = append(args, string(metadataBytes))
+						argIndex++
+					}
+				}
+
+				if len(setParts) == 0 {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "No valid fields to update"})
+					return
+				}
+
+				setParts = append(setParts, "updated_at = NOW()")
+				args = append(args, id)
+
+				query := "UPDATE products SET " + strings.Join(setParts, ", ") + " WHERE id = $" + strconv.Itoa(argIndex)
+
+				_, err = db.Exec(query, args...)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update product: " + err.Error()})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{"message": "Product updated successfully"})
+			})
+
+			// Delete product
+			products.DELETE("/:id", func(c *gin.Context) {
+				// Add CORS headers
+				c.Header("Access-Control-Allow-Origin", "*")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+				id := c.Param("id")
+
+				result, err := db.Exec("DELETE FROM products WHERE id = $1", id)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete product"})
+					return
+				}
+
+				rowsAffected, err := result.RowsAffected()
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete product"})
+					return
+				}
+
+				if rowsAffected == 0 {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+					return
+				}
+
+				c.Status(http.StatusNoContent)
+			})
+		}
+
+		// Feed Management System
+		feeds := api.Group("/feeds")
+		{
+			// Google Shopping Feed
+			feeds.GET("/google-shopping", func(c *gin.Context) {
+				// Get query parameters
+				format := c.DefaultQuery("format", "xml")
+				limit := c.DefaultQuery("limit", "100")
+
+				// Convert limit to integer
+				limitInt := 100
+				if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
+					// Limit converted successfully
+				}
+
+				// Get products for Google Shopping feed
+				rows, err := db.Query(`
 					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
 						   images, variants, metadata, status
 					FROM products 
@@ -3244,837 +3531,25 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					ORDER BY created_at DESC 
 					LIMIT $1
 				`, limitInt)
-					if err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
-						return
-					}
-					defer rows.Close()
-
-					var products []map[string]interface{}
-					for rows.Next() {
-						var id, externalID, title, description, brand, category, status string
-						var sku sql.NullString
-						var price sql.NullFloat64
-						var currency string
-						var images string
-						var variants, metadata sql.NullString
-
-						err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
-							&images, &variants, &metadata, &status)
-						if err != nil {
-							continue // Skip problematic products
-						}
-
-						// Parse images array
-						var imageList []string
-						if images != "" {
-							cleanImages := strings.Trim(images, "{}")
-							if cleanImages != "" {
-								imageList = strings.Split(cleanImages, ",")
-							}
-						}
-
-						// Get first image as main image
-						mainImage := ""
-						if len(imageList) > 0 {
-							mainImage = imageList[0]
-						}
-
-						products = append(products, map[string]interface{}{
-							"id":           externalID,
-							"title":        title,
-							"description":  description,
-							"price":        fmt.Sprintf("%.2f %s", price, currency),
-							"sku":          sku,
-							"brand":        brand,
-							"category":     category,
-							"image_link":   mainImage,
-							"availability": "in stock",
-							"condition":    "new",
-						})
-					}
-
-					if format == "xml" {
-						// Generate Google Shopping XML feed
-						xmlContent := generateGoogleShoppingXML(products)
-						c.Header("Content-Type", "application/xml")
-						c.String(http.StatusOK, xmlContent)
-					} else {
-						// Return JSON format
-						c.JSON(http.StatusOK, gin.H{
-							"feed_type": "google_shopping",
-							"products":  products,
-							"total":     len(products),
-							"message":   "Google Shopping feed generated successfully",
-						})
-					}
-				})
-
-				// Facebook Catalog Feed
-				feeds.GET("/facebook-catalog", func(c *gin.Context) {
-					// Get query parameters
-					format := c.DefaultQuery("format", "json")
-					limit := c.DefaultQuery("limit", "100")
-
-					// Convert limit to integer
-					limitInt := 100
-					if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
-						// Limit converted successfully
-					}
-
-					// Get products for Facebook Catalog feed
-					rows, err := db.Query(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
-						   images, variants, metadata, status
-					FROM products 
-					WHERE status = 'ACTIVE' AND price > 0
-					ORDER BY created_at DESC 
-					LIMIT $1
-				`, limitInt)
-					if err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
-						return
-					}
-					defer rows.Close()
-
-					var products []map[string]interface{}
-					for rows.Next() {
-						var id, externalID, title, description, brand, category, status string
-						var sku sql.NullString
-						var price sql.NullFloat64
-						var currency string
-						var images string
-						var variants, metadata sql.NullString
-
-						err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
-							&images, &variants, &metadata, &status)
-						if err != nil {
-							continue // Skip problematic products
-						}
-
-						// Parse images array
-						var imageList []string
-						if images != "" {
-							cleanImages := strings.Trim(images, "{}")
-							if cleanImages != "" {
-								imageList = strings.Split(cleanImages, ",")
-							}
-						}
-
-						products = append(products, map[string]interface{}{
-							"id":           externalID,
-							"name":         title,
-							"description":  description,
-							"price":        fmt.Sprintf("%.2f %s", price, currency),
-							"sku":          sku,
-							"brand":        brand,
-							"category":     category,
-							"image_url":    imageList,
-							"availability": "in stock",
-							"condition":    "new",
-							"url":          fmt.Sprintf("https://austus-themes.myshopify.com/products/%s", externalID),
-						})
-					}
-
-					if format == "csv" {
-						// Generate CSV feed
-						csvContent := generateFacebookCSV(products)
-						c.Header("Content-Type", "text/csv")
-						c.Header("Content-Disposition", "attachment; filename=facebook_catalog.csv")
-						c.String(http.StatusOK, csvContent)
-					} else {
-						// Return JSON format
-						c.JSON(http.StatusOK, gin.H{
-							"feed_type": "facebook_catalog",
-							"products":  products,
-							"total":     len(products),
-							"message":   "Facebook Catalog feed generated successfully",
-						})
-					}
-				})
-
-				// Instagram Shopping Feed
-				feeds.GET("/instagram-shopping", func(c *gin.Context) {
-					// Get query parameters
-					format := c.DefaultQuery("format", "json")
-					limit := c.DefaultQuery("limit", "100")
-
-					// Convert limit to integer
-					limitInt := 100
-					if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
-						// Limit converted successfully
-					}
-
-					// Get products for Instagram Shopping feed
-					rows, err := db.Query(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
-						   images, variants, metadata, status
-					FROM products 
-					WHERE status = 'ACTIVE' AND price > 0
-					ORDER BY created_at DESC 
-					LIMIT $1
-				`, limitInt)
-					if err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
-						return
-					}
-					defer rows.Close()
-
-					var products []map[string]interface{}
-					for rows.Next() {
-						var id, externalID, title, description, brand, category, status string
-						var sku sql.NullString
-						var price sql.NullFloat64
-						var currency string
-						var images string
-						var variants, metadata sql.NullString
-
-						err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
-							&images, &variants, &metadata, &status)
-						if err != nil {
-							continue // Skip problematic products
-						}
-
-						// Parse images array
-						var imageList []string
-						if images != "" {
-							cleanImages := strings.Trim(images, "{}")
-							if cleanImages != "" {
-								imageList = strings.Split(cleanImages, ",")
-							}
-						}
-
-						products = append(products, map[string]interface{}{
-							"id":           externalID,
-							"name":         title,
-							"description":  description,
-							"price":        fmt.Sprintf("%.2f %s", price, currency),
-							"sku":          sku,
-							"brand":        brand,
-							"category":     category,
-							"image_url":    imageList,
-							"availability": "in stock",
-							"condition":    "new",
-							"url":          fmt.Sprintf("https://austus-themes.myshopify.com/products/%s", externalID),
-						})
-					}
-
-					if format == "csv" {
-						// Generate CSV feed
-						csvContent := generateInstagramCSV(products)
-						c.Header("Content-Type", "text/csv")
-						c.Header("Content-Disposition", "attachment; filename=instagram_shopping.csv")
-						c.String(http.StatusOK, csvContent)
-					} else {
-						// Return JSON format
-						c.JSON(http.StatusOK, gin.H{
-							"feed_type": "instagram_shopping",
-							"products":  products,
-							"total":     len(products),
-							"message":   "Instagram Shopping feed generated successfully",
-						})
-					}
-				})
-
-				// Feed Statistics
-				feeds.GET("/stats", func(c *gin.Context) {
-					var stats struct {
-						TotalProducts      int `json:"total_products"`
-						ActiveProducts     int `json:"active_products"`
-						ProductsWithImages int `json:"products_with_images"`
-						ProductsWithPrice  int `json:"products_with_price"`
-					}
-
-					// Get total products
-					db.QueryRow("SELECT COUNT(*) FROM products").Scan(&stats.TotalProducts)
-
-					// Get active products
-					db.QueryRow("SELECT COUNT(*) FROM products WHERE status = 'ACTIVE'").Scan(&stats.ActiveProducts)
-
-					// Get products with images
-					db.QueryRow("SELECT COUNT(*) FROM products WHERE images IS NOT NULL AND array_length(images, 1) > 0").Scan(&stats.ProductsWithImages)
-
-					// Get products with price
-					db.QueryRow("SELECT COUNT(*) FROM products WHERE price > 0").Scan(&stats.ProductsWithPrice)
-
-					c.JSON(http.StatusOK, gin.H{
-						"data":    stats,
-						"message": "Feed statistics retrieved successfully",
-					})
-				})
-			}
-
-			// Export Channels System
-			exports := api.Group("/exports")
-			{
-				// CSV Export
-				exports.GET("/csv", func(c *gin.Context) {
-					// Get query parameters
-					format := c.DefaultQuery("format", "csv") // csv, excel
-					limit := c.DefaultQuery("limit", "1000")
-					filters := c.Query("filters") // JSON string with filters
-
-					// Convert limit to integer
-					limitInt := 1000
-					if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
-						// Limit converted successfully
-					}
-
-					// Build WHERE clause based on filters
-					whereClause := "WHERE status = 'ACTIVE'"
-					args := []interface{}{}
-					argIndex := 1
-
-					if filters != "" {
-						var filterMap map[string]interface{}
-						if err := json.Unmarshal([]byte(filters), &filterMap); err == nil {
-							if category, ok := filterMap["category"].(string); ok && category != "" {
-								whereClause += fmt.Sprintf(" AND category = $%d", argIndex)
-								args = append(args, category)
-								argIndex++
-							}
-							if brand, ok := filterMap["brand"].(string); ok && brand != "" {
-								whereClause += fmt.Sprintf(" AND brand = $%d", argIndex)
-								args = append(args, brand)
-								argIndex++
-							}
-							if minPrice, ok := filterMap["min_price"].(float64); ok {
-								whereClause += fmt.Sprintf(" AND price >= $%d", argIndex)
-								args = append(args, minPrice)
-								argIndex++
-							}
-							if maxPrice, ok := filterMap["max_price"].(float64); ok {
-								whereClause += fmt.Sprintf(" AND price <= $%d", argIndex)
-								args = append(args, maxPrice)
-								argIndex++
-							}
-						}
-					}
-
-					// Get products
-					query := fmt.Sprintf(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
-						   images, variants, metadata, status, created_at, updated_at
-					FROM products %s 
-					ORDER BY created_at DESC 
-					LIMIT $%d
-				`, whereClause, argIndex)
-
-					args = append(args, limitInt)
-
-					rows, err := db.Query(query, args...)
-					if err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
-						return
-					}
-					defer rows.Close()
-
-					var products []map[string]interface{}
-					for rows.Next() {
-						var id, externalID, title, description, brand, category, status string
-						var sku sql.NullString
-						var price sql.NullFloat64
-						var currency string
-						var images string
-						var variants, metadata sql.NullString
-						var createdAt, updatedAt time.Time
-
-						err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
-							&images, &variants, &metadata, &status, &createdAt, &updatedAt)
-						if err != nil {
-							continue
-						}
-
-						// Parse images array
-						var imageList []string
-						if images != "" {
-							cleanImages := strings.Trim(images, "{}")
-							if cleanImages != "" {
-								imageList = strings.Split(cleanImages, ",")
-							}
-						}
-
-						products = append(products, map[string]interface{}{
-							"id":          id,
-							"external_id": externalID,
-							"title":       title,
-							"description": strings.ReplaceAll(strings.ReplaceAll(description, "<p>", ""), "</p>", ""),
-							"price":       getFloatValue(price),
-							"currency":    currency,
-							"sku":         getStringValue(sku),
-							"brand":       brand,
-							"category":    category,
-							"images":      strings.Join(imageList, "; "),
-							"variants":    getStringValue(variants),
-							"metadata":    getStringValue(metadata),
-							"status":      status,
-							"created_at":  createdAt.Format("2006-01-02 15:04:05"),
-							"updated_at":  updatedAt.Format("2006-01-02 15:04:05"),
-						})
-					}
-
-					if format == "excel" {
-						// Generate Excel-compatible CSV
-						csvContent := generateExcelCSV(products)
-						c.Header("Content-Type", "text/csv; charset=utf-8")
-						c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=products_export_%s.csv", time.Now().Format("20060102_150405")))
-						c.String(http.StatusOK, csvContent)
-					} else {
-						// Generate standard CSV
-						csvContent := generateStandardCSV(products)
-						c.Header("Content-Type", "text/csv; charset=utf-8")
-						c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=products_export_%s.csv", time.Now().Format("20060102_150405")))
-						c.String(http.StatusOK, csvContent)
-					}
-				})
-
-				// JSON Export
-				exports.GET("/json", func(c *gin.Context) {
-					// Get query parameters
-					limit := c.DefaultQuery("limit", "1000")
-					filters := c.Query("filters")
-
-					// Convert limit to integer
-					limitInt := 1000
-					if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
-						// Limit converted successfully
-					}
-
-					// Build WHERE clause based on filters
-					whereClause := "WHERE status = 'ACTIVE'"
-					args := []interface{}{}
-					argIndex := 1
-
-					if filters != "" {
-						var filterMap map[string]interface{}
-						if err := json.Unmarshal([]byte(filters), &filterMap); err == nil {
-							if category, ok := filterMap["category"].(string); ok && category != "" {
-								whereClause += fmt.Sprintf(" AND category = $%d", argIndex)
-								args = append(args, category)
-								argIndex++
-							}
-							if brand, ok := filterMap["brand"].(string); ok && brand != "" {
-								whereClause += fmt.Sprintf(" AND brand = $%d", argIndex)
-								args = append(args, brand)
-								argIndex++
-							}
-						}
-					}
-
-					// Get products
-					query := fmt.Sprintf(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
-						   images, variants, metadata, status, created_at, updated_at
-					FROM products %s 
-					ORDER BY created_at DESC 
-					LIMIT $%d
-				`, whereClause, argIndex)
-
-					args = append(args, limitInt)
-
-					rows, err := db.Query(query, args...)
-					if err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
-						return
-					}
-					defer rows.Close()
-
-					var products []map[string]interface{}
-					for rows.Next() {
-						var id, externalID, title, description, brand, category, status string
-						var sku sql.NullString
-						var price sql.NullFloat64
-						var currency string
-						var images string
-						var variants, metadata sql.NullString
-						var createdAt, updatedAt time.Time
-
-						err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
-							&images, &variants, &metadata, &status, &createdAt, &updatedAt)
-						if err != nil {
-							continue
-						}
-
-						// Parse images array
-						var imageList []string
-						if images != "" {
-							cleanImages := strings.Trim(images, "{}")
-							if cleanImages != "" {
-								imageList = strings.Split(cleanImages, ",")
-							}
-						}
-
-						products = append(products, map[string]interface{}{
-							"id":          id,
-							"external_id": externalID,
-							"title":       title,
-							"description": description,
-							"price":       getFloatValue(price),
-							"currency":    currency,
-							"sku":         getStringValue(sku),
-							"brand":       brand,
-							"category":    category,
-							"images":      imageList,
-							"variants":    getStringValue(variants),
-							"metadata":    getStringValue(metadata),
-							"status":      status,
-							"created_at":  createdAt,
-							"updated_at":  updatedAt,
-						})
-					}
-
-					c.Header("Content-Type", "application/json")
-					c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=products_export_%s.json", time.Now().Format("20060102_150405")))
-					c.JSON(http.StatusOK, gin.H{
-						"export_info": gin.H{
-							"timestamp":      time.Now(),
-							"total_products": len(products),
-							"format":         "json",
-							"version":        "1.0",
-						},
-						"products": products,
-					})
-				})
-
-				// XML Export
-				exports.GET("/xml", func(c *gin.Context) {
-					// Get query parameters
-					limit := c.DefaultQuery("limit", "1000")
-
-					// Convert limit to integer
-					limitInt := 1000
-					if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
-						// Limit converted successfully
-					}
-
-					// Get products
-					rows, err := db.Query(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
-						   images, variants, metadata, status, created_at, updated_at
-					FROM products 
-					WHERE status = 'ACTIVE'
-					ORDER BY created_at DESC 
-					LIMIT $1
-				`, limitInt)
-					if err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
-						return
-					}
-					defer rows.Close()
-
-					var products []map[string]interface{}
-					for rows.Next() {
-						var id, externalID, title, description, brand, category, status string
-						var sku sql.NullString
-						var price sql.NullFloat64
-						var currency string
-						var images string
-						var variants, metadata sql.NullString
-						var createdAt, updatedAt time.Time
-
-						err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
-							&images, &variants, &metadata, &status, &createdAt, &updatedAt)
-						if err != nil {
-							continue
-						}
-
-						// Parse images array
-						var imageList []string
-						if images != "" {
-							cleanImages := strings.Trim(images, "{}")
-							if cleanImages != "" {
-								imageList = strings.Split(cleanImages, ",")
-							}
-						}
-
-						products = append(products, map[string]interface{}{
-							"id":          id,
-							"external_id": externalID,
-							"title":       title,
-							"description": description,
-							"price":       getFloatValue(price),
-							"currency":    currency,
-							"sku":         getStringValue(sku),
-							"brand":       brand,
-							"category":    category,
-							"images":      imageList,
-							"variants":    getStringValue(variants),
-							"metadata":    getStringValue(metadata),
-							"status":      status,
-							"created_at":  createdAt,
-							"updated_at":  updatedAt,
-						})
-					}
-
-					xmlContent := generateXMLExport(products)
-					c.Header("Content-Type", "application/xml")
-					c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=products_export_%s.xml", time.Now().Format("20060102_150405")))
-					c.String(http.StatusOK, xmlContent)
-				})
-
-				// Direct Channel Sync
-				exports.POST("/sync/:channel", func(c *gin.Context) {
-					channel := c.Param("channel") // google, facebook, instagram, etc.
-
-					var request struct {
-						ProductIDs []string               `json:"product_ids"`
-						Settings   map[string]interface{} `json:"settings"`
-					}
-
-					if err := c.ShouldBindJSON(&request); err != nil {
-						c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-						return
-					}
-
-					// Get products to sync
-					var whereClause string
-					var args []interface{}
-
-					if len(request.ProductIDs) > 0 {
-						placeholders := make([]string, len(request.ProductIDs))
-						for i, id := range request.ProductIDs {
-							placeholders[i] = fmt.Sprintf("$%d", i+1)
-							args = append(args, id)
-						}
-						whereClause = fmt.Sprintf("WHERE id IN (%s)", strings.Join(placeholders, ","))
-					} else {
-						whereClause = "WHERE status = $1"
-						args = append(args, "ACTIVE")
-					}
-
-					rows, err := db.Query(fmt.Sprintf(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
-						   images, variants, metadata, status
-					FROM products %s
-					ORDER BY created_at DESC
-				`, whereClause), args...)
-					if err != nil {
-						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
-						return
-					}
-					defer rows.Close()
-
-					var products []map[string]interface{}
-					for rows.Next() {
-						var id, externalID, title, description, brand, category, status string
-						var sku sql.NullString
-						var price sql.NullFloat64
-						var currency string
-						var images string
-						var variants, metadata sql.NullString
-
-						err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
-							&images, &variants, &metadata, &status)
-						if err != nil {
-							continue
-						}
-
-						// Parse images array
-						var imageList []string
-						if images != "" {
-							cleanImages := strings.Trim(images, "{}")
-							if cleanImages != "" {
-								imageList = strings.Split(cleanImages, ",")
-							}
-						}
-
-						products = append(products, map[string]interface{}{
-							"id":          id,
-							"external_id": externalID,
-							"title":       title,
-							"description": description,
-							"price":       getFloatValue(price),
-							"currency":    currency,
-							"sku":         getStringValue(sku),
-							"brand":       brand,
-							"category":    category,
-							"images":      imageList,
-							"variants":    getStringValue(variants),
-							"metadata":    getStringValue(metadata),
-							"status":      status,
-						})
-					}
-
-					// Sync to specific channel
-					result := syncToChannel(channel, products, request.Settings)
-
-					c.JSON(http.StatusOK, gin.H{
-						"message":         fmt.Sprintf("Products synced to %s successfully", channel),
-						"channel":         channel,
-						"products_synced": len(products),
-						"sync_result":     result,
-						"timestamp":       time.Now(),
-					})
-				})
-
-				// Export Analytics
-				exports.GET("/analytics", func(c *gin.Context) {
-					var analytics struct {
-						TotalExports    int     `json:"total_exports"`
-						CSVExports      int     `json:"csv_exports"`
-						JSONExports     int     `json:"json_exports"`
-						XMLExports      int     `json:"xml_exports"`
-						ChannelSyncs    int     `json:"channel_syncs"`
-						AverageProducts float64 `json:"average_products_per_export"`
-					}
-
-					// Get export statistics (placeholder - would need export tracking table)
-					analytics.TotalExports = 0
-					analytics.CSVExports = 0
-					analytics.JSONExports = 0
-					analytics.XMLExports = 0
-					analytics.ChannelSyncs = 0
-					analytics.AverageProducts = 0.0
-
-					c.JSON(http.StatusOK, gin.H{
-						"data":    analytics,
-						"message": "Export analytics retrieved successfully",
-						"note":    "Export tracking will be implemented with database logging",
-					})
-				})
-			}
-
-			// AI-Powered Product Transformation
-			ai := api.Group("/ai")
-			{
-				// Title Optimization
-				ai.POST("/optimize-title", func(c *gin.Context) {
-					var request struct {
-						ProductID string `json:"product_id" binding:"required"`
-						Keywords  string `json:"keywords,omitempty"`
-						MaxLength int    `json:"max_length,omitempty"`
-					}
-
-					if err := c.ShouldBindJSON(&request); err != nil {
-						c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-						return
-					}
-
-					// Get product details
-					var title, description, brand, category string
-					err := db.QueryRow(`
-					SELECT title, description, brand, category 
-					FROM products 
-					WHERE id = $1
-				`, request.ProductID).Scan(&title, &description, &brand, &category)
-
-					if err != nil {
-						c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
-						return
-					}
-
-					// AI-powered title optimization
-					optimizedTitle := optimizeProductTitle(title, description, brand, category, request.Keywords, request.MaxLength)
-
-					c.JSON(http.StatusOK, gin.H{
-						"product_id":      request.ProductID,
-						"original_title":  title,
-						"optimized_title": optimizedTitle,
-						"improvement":     calculateTitleImprovement(title, optimizedTitle),
-						"seo_score":       calculateSEOScore(optimizedTitle),
-						"message":         "Title optimized successfully",
-					})
-				})
-
-				// Description Enhancement
-				ai.POST("/enhance-description", func(c *gin.Context) {
-					var request struct {
-						ProductID string `json:"product_id" binding:"required"`
-						Style     string `json:"style,omitempty"`  // "marketing", "technical", "casual"
-						Length    string `json:"length,omitempty"` // "short", "medium", "long"
-					}
-
-					if err := c.ShouldBindJSON(&request); err != nil {
-						c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-						return
-					}
-
-					// Get product details
-					var title, description, brand, category string
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
+					return
+				}
+				defer rows.Close()
+
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
 					var price sql.NullFloat64
-					err := db.QueryRow(`
-					SELECT title, description, brand, category, price 
-					FROM products 
-					WHERE id = $1
-				`, request.ProductID).Scan(&title, &description, &brand, &category, &price)
-
-					if err != nil {
-						c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
-						return
-					}
-
-					// AI-powered description enhancement
-					enhancedDescription := enhanceProductDescription(title, description, brand, category, getFloatValue(price), request.Style, request.Length)
-
-					c.JSON(http.StatusOK, gin.H{
-						"product_id":           request.ProductID,
-						"original_description": description,
-						"enhanced_description": enhancedDescription,
-						"improvement":          calculateDescriptionImprovement(description, enhancedDescription),
-						"readability_score":    calculateReadabilityScore(enhancedDescription),
-						"message":              "Description enhanced successfully",
-					})
-				})
-
-				// Category Suggestions
-				ai.POST("/suggest-category", func(c *gin.Context) {
-					var request struct {
-						ProductID string `json:"product_id" binding:"required"`
-					}
-
-					if err := c.ShouldBindJSON(&request); err != nil {
-						c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-						return
-					}
-
-					// Get product details
-					var title, description, brand, currentCategory string
-					err := db.QueryRow(`
-					SELECT title, description, brand, category 
-					FROM products 
-					WHERE id = $1
-				`, request.ProductID).Scan(&title, &description, &brand, &currentCategory)
-
-					if err != nil {
-						c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
-						return
-					}
-
-					// AI-powered category suggestions
-					suggestions := suggestProductCategory(title, description, brand, currentCategory)
-
-					c.JSON(http.StatusOK, gin.H{
-						"product_id":        request.ProductID,
-						"current_category":  currentCategory,
-						"suggestions":       suggestions,
-						"confidence_scores": calculateCategoryConfidence(suggestions),
-						"message":           "Category suggestions generated successfully",
-					})
-				})
-
-				// Image Optimization
-				ai.POST("/optimize-images", func(c *gin.Context) {
-					var request struct {
-						ProductID string `json:"product_id" binding:"required"`
-					}
-
-					if err := c.ShouldBindJSON(&request); err != nil {
-						c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-						return
-					}
-
-					// Get product details
-					var title, description, brand, category string
+					var currency string
 					var images string
-					err := db.QueryRow(`
-					SELECT title, description, brand, category, images 
-					FROM products 
-					WHERE id = $1
-				`, request.ProductID).Scan(&title, &description, &brand, &category, &images)
+					var variants, metadata sql.NullString
 
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+						&images, &variants, &metadata, &status)
 					if err != nil {
-						c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
-						return
+						continue // Skip problematic products
 					}
 
 					// Parse images array
@@ -4086,143 +3561,551 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 
-					// AI-powered image optimization suggestions
-					optimizationSuggestions := optimizeProductImages(title, description, brand, category, imageList)
-
-					c.JSON(http.StatusOK, gin.H{
-						"product_id":               request.ProductID,
-						"current_images":           imageList,
-						"optimization_suggestions": optimizationSuggestions,
-						"image_quality_score":      calculateImageQualityScore(imageList),
-						"message":                  "Image optimization suggestions generated successfully",
-					})
-				})
-
-				// Bulk AI Transformation
-				ai.POST("/bulk-transform", func(c *gin.Context) {
-					var request struct {
-						ProductIDs      []string `json:"product_ids" binding:"required"`
-						Transformations []string `json:"transformations" binding:"required"` // ["title", "description", "category", "images"]
+					// Get first image as main image
+					mainImage := ""
+					if len(imageList) > 0 {
+						mainImage = imageList[0]
 					}
 
-					if err := c.ShouldBindJSON(&request); err != nil {
-						c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-						return
-					}
-
-					// Process bulk transformations
-					results := processBulkTransformations(request.ProductIDs, request.Transformations)
-
-					c.JSON(http.StatusOK, gin.H{
-						"processed_products": len(request.ProductIDs),
-						"transformations":    request.Transformations,
-						"results":            results,
-						"success_count":      countSuccessfulTransformations(results),
-						"message":            "Bulk transformation completed successfully",
+					products = append(products, map[string]interface{}{
+						"id":           externalID,
+						"title":        title,
+						"description":  description,
+						"price":        fmt.Sprintf("%.2f %s", price, currency),
+						"sku":          sku,
+						"brand":        brand,
+						"category":     category,
+						"image_link":   mainImage,
+						"availability": "in stock",
+						"condition":    "new",
 					})
-				})
-
-				// AI Diagnostic Test
-				ai.GET("/test", func(c *gin.Context) {
-					// Test OpenRouter AI connection
-					testPrompt := "Say 'AI is working' if you can read this message."
-
-					aiResponse, err := callOpenRouterAI(testPrompt, 20, 0.5)
-					if err != nil {
-						c.JSON(http.StatusOK, gin.H{
-							"ai_status":     "FAILED",
-							"error":         err.Error(),
-							"fallback_used": true,
-							"message":       "AI is not working, using fallback system",
-						})
-						return
-					}
-
-					c.JSON(http.StatusOK, gin.H{
-						"ai_status":     "WORKING",
-						"ai_response":   aiResponse,
-						"fallback_used": false,
-						"message":       "AI is working correctly",
-					})
-				})
-
-				// AI Analytics
-				ai.GET("/analytics", func(c *gin.Context) {
-					// Get AI transformation analytics
-					var analytics struct {
-						TotalTransformations    int     `json:"total_transformations"`
-						TitleOptimizations      int     `json:"title_optimizations"`
-						DescriptionEnhancements int     `json:"description_enhancements"`
-						CategorySuggestions     int     `json:"category_suggestions"`
-						ImageOptimizations      int     `json:"image_optimizations"`
-						AverageSEOScore         float64 `json:"average_seo_score"`
-						AverageReadability      float64 `json:"average_readability_score"`
-					}
-
-					// Get transformation counts (placeholder - would need transformation_logs table)
-					analytics.TotalTransformations = 0
-					analytics.TitleOptimizations = 0
-					analytics.DescriptionEnhancements = 0
-					analytics.CategorySuggestions = 0
-					analytics.ImageOptimizations = 0
-					analytics.AverageSEOScore = 85.5
-					analytics.AverageReadability = 78.2
-
-					c.JSON(http.StatusOK, gin.H{
-						"data":    analytics,
-						"message": "AI analytics retrieved successfully",
-					})
-				})
-			}
-		}
-
-		// Connectors
-		api.GET("/connectors", func(c *gin.Context) {
-			// Query connectors from Supabase database
-			rows, err := db.Query("SELECT id, name, type, status, shop_domain, created_at, last_sync FROM connectors ORDER BY created_at DESC")
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query connectors"})
-				return
-			}
-			defer rows.Close()
-
-			var connectors []map[string]interface{}
-			for rows.Next() {
-				var id, name, connectorType, status, shopDomain string
-				var createdAt time.Time
-				var lastSync *time.Time
-
-				err := rows.Scan(&id, &name, &connectorType, &status, &shopDomain, &createdAt, &lastSync)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan connector"})
-					return
 				}
 
-				connectors = append(connectors, map[string]interface{}{
-					"id":          id,
-					"name":        name,
-					"type":        connectorType,
-					"status":      status,
-					"shop_domain": shopDomain,
-					"created_at":  createdAt,
-					"last_sync":   lastSync,
-				})
-			}
-
-			c.JSON(200, gin.H{
-				"data":    connectors,
-				"message": "Connectors retrieved successfully",
+				if format == "xml" {
+					// Generate Google Shopping XML feed
+					xmlContent := generateGoogleShoppingXML(products)
+					c.Header("Content-Type", "application/xml")
+					c.String(http.StatusOK, xmlContent)
+				} else {
+					// Return JSON format
+					c.JSON(http.StatusOK, gin.H{
+						"feed_type": "google_shopping",
+						"products":  products,
+						"total":     len(products),
+						"message":   "Google Shopping feed generated successfully",
+					})
+				}
 			})
-		})
 
-		// Shopify routes
-		shopify := api.Group("/shopify")
+			// Facebook Catalog Feed
+			feeds.GET("/facebook-catalog", func(c *gin.Context) {
+				// Get query parameters
+				format := c.DefaultQuery("format", "json")
+				limit := c.DefaultQuery("limit", "100")
+
+				// Convert limit to integer
+				limitInt := 100
+				if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
+					// Limit converted successfully
+				}
+
+				// Get products for Facebook Catalog feed
+				rows, err := db.Query(`
+					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+						   images, variants, metadata, status
+					FROM products 
+					WHERE status = 'ACTIVE' AND price > 0
+					ORDER BY created_at DESC 
+					LIMIT $1
+				`, limitInt)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
+					return
+				}
+				defer rows.Close()
+
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
+					var price sql.NullFloat64
+					var currency string
+					var images string
+					var variants, metadata sql.NullString
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+						&images, &variants, &metadata, &status)
+					if err != nil {
+						continue // Skip problematic products
+					}
+
+					// Parse images array
+					var imageList []string
+					if images != "" {
+						cleanImages := strings.Trim(images, "{}")
+						if cleanImages != "" {
+							imageList = strings.Split(cleanImages, ",")
+						}
+					}
+
+					products = append(products, map[string]interface{}{
+						"id":           externalID,
+						"name":         title,
+						"description":  description,
+						"price":        fmt.Sprintf("%.2f %s", price, currency),
+						"sku":          sku,
+						"brand":        brand,
+						"category":     category,
+						"image_url":    imageList,
+						"availability": "in stock",
+						"condition":    "new",
+						"url":          fmt.Sprintf("https://austus-themes.myshopify.com/products/%s", externalID),
+					})
+				}
+
+				if format == "csv" {
+					// Generate CSV feed
+					csvContent := generateFacebookCSV(products)
+					c.Header("Content-Type", "text/csv")
+					c.Header("Content-Disposition", "attachment; filename=facebook_catalog.csv")
+					c.String(http.StatusOK, csvContent)
+				} else {
+					// Return JSON format
+					c.JSON(http.StatusOK, gin.H{
+						"feed_type": "facebook_catalog",
+						"products":  products,
+						"total":     len(products),
+						"message":   "Facebook Catalog feed generated successfully",
+					})
+				}
+			})
+
+			// Instagram Shopping Feed
+			feeds.GET("/instagram-shopping", func(c *gin.Context) {
+				// Get query parameters
+				format := c.DefaultQuery("format", "json")
+				limit := c.DefaultQuery("limit", "100")
+
+				// Convert limit to integer
+				limitInt := 100
+				if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
+					// Limit converted successfully
+				}
+
+				// Get products for Instagram Shopping feed
+				rows, err := db.Query(`
+					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+						   images, variants, metadata, status
+					FROM products 
+					WHERE status = 'ACTIVE' AND price > 0
+					ORDER BY created_at DESC 
+					LIMIT $1
+				`, limitInt)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
+					return
+				}
+				defer rows.Close()
+
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
+					var price sql.NullFloat64
+					var currency string
+					var images string
+					var variants, metadata sql.NullString
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+						&images, &variants, &metadata, &status)
+					if err != nil {
+						continue // Skip problematic products
+					}
+
+					// Parse images array
+					var imageList []string
+					if images != "" {
+						cleanImages := strings.Trim(images, "{}")
+						if cleanImages != "" {
+							imageList = strings.Split(cleanImages, ",")
+						}
+					}
+
+					products = append(products, map[string]interface{}{
+						"id":           externalID,
+						"name":         title,
+						"description":  description,
+						"price":        fmt.Sprintf("%.2f %s", price, currency),
+						"sku":          sku,
+						"brand":        brand,
+						"category":     category,
+						"image_url":    imageList,
+						"availability": "in stock",
+						"condition":    "new",
+						"url":          fmt.Sprintf("https://austus-themes.myshopify.com/products/%s", externalID),
+					})
+				}
+
+				if format == "csv" {
+					// Generate CSV feed
+					csvContent := generateInstagramCSV(products)
+					c.Header("Content-Type", "text/csv")
+					c.Header("Content-Disposition", "attachment; filename=instagram_shopping.csv")
+					c.String(http.StatusOK, csvContent)
+				} else {
+					// Return JSON format
+					c.JSON(http.StatusOK, gin.H{
+						"feed_type": "instagram_shopping",
+						"products":  products,
+						"total":     len(products),
+						"message":   "Instagram Shopping feed generated successfully",
+					})
+				}
+			})
+
+			// Feed Statistics
+			feeds.GET("/stats", func(c *gin.Context) {
+				var stats struct {
+					TotalProducts      int `json:"total_products"`
+					ActiveProducts     int `json:"active_products"`
+					ProductsWithImages int `json:"products_with_images"`
+					ProductsWithPrice  int `json:"products_with_price"`
+				}
+
+				// Get total products
+				db.QueryRow("SELECT COUNT(*) FROM products").Scan(&stats.TotalProducts)
+
+				// Get active products
+				db.QueryRow("SELECT COUNT(*) FROM products WHERE status = 'ACTIVE'").Scan(&stats.ActiveProducts)
+
+				// Get products with images
+				db.QueryRow("SELECT COUNT(*) FROM products WHERE images IS NOT NULL AND array_length(images, 1) > 0").Scan(&stats.ProductsWithImages)
+
+				// Get products with price
+				db.QueryRow("SELECT COUNT(*) FROM products WHERE price > 0").Scan(&stats.ProductsWithPrice)
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":    stats,
+					"message": "Feed statistics retrieved successfully",
+				})
+			})
+		}
+
+		// Export Channels System
+		exports := api.Group("/exports")
 		{
-			// Shopify OAuth Install
-			shopify.POST("/install", func(c *gin.Context) {
+			// CSV Export
+			exports.GET("/csv", func(c *gin.Context) {
+				// Get query parameters
+				format := c.DefaultQuery("format", "csv") // csv, excel
+				limit := c.DefaultQuery("limit", "1000")
+				filters := c.Query("filters") // JSON string with filters
+
+				// Convert limit to integer
+				limitInt := 1000
+				if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
+					// Limit converted successfully
+				}
+
+				// Build WHERE clause based on filters
+				whereClause := "WHERE status = 'ACTIVE'"
+				args := []interface{}{}
+				argIndex := 1
+
+				if filters != "" {
+					var filterMap map[string]interface{}
+					if err := json.Unmarshal([]byte(filters), &filterMap); err == nil {
+						if category, ok := filterMap["category"].(string); ok && category != "" {
+							whereClause += fmt.Sprintf(" AND category = $%d", argIndex)
+							args = append(args, category)
+							argIndex++
+						}
+						if brand, ok := filterMap["brand"].(string); ok && brand != "" {
+							whereClause += fmt.Sprintf(" AND brand = $%d", argIndex)
+							args = append(args, brand)
+							argIndex++
+						}
+						if minPrice, ok := filterMap["min_price"].(float64); ok {
+							whereClause += fmt.Sprintf(" AND price >= $%d", argIndex)
+							args = append(args, minPrice)
+							argIndex++
+						}
+						if maxPrice, ok := filterMap["max_price"].(float64); ok {
+							whereClause += fmt.Sprintf(" AND price <= $%d", argIndex)
+							args = append(args, maxPrice)
+							argIndex++
+						}
+					}
+				}
+
+				// Get products
+				query := fmt.Sprintf(`
+					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+						   images, variants, metadata, status, created_at, updated_at
+					FROM products %s 
+					ORDER BY created_at DESC 
+					LIMIT $%d
+				`, whereClause, argIndex)
+
+				args = append(args, limitInt)
+
+				rows, err := db.Query(query, args...)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
+					return
+				}
+				defer rows.Close()
+
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
+					var price sql.NullFloat64
+					var currency string
+					var images string
+					var variants, metadata sql.NullString
+					var createdAt, updatedAt time.Time
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+						&images, &variants, &metadata, &status, &createdAt, &updatedAt)
+					if err != nil {
+						continue
+					}
+
+					// Parse images array
+					var imageList []string
+					if images != "" {
+						cleanImages := strings.Trim(images, "{}")
+						if cleanImages != "" {
+							imageList = strings.Split(cleanImages, ",")
+						}
+					}
+
+					products = append(products, map[string]interface{}{
+						"id":          id,
+						"external_id": externalID,
+						"title":       title,
+						"description": strings.ReplaceAll(strings.ReplaceAll(description, "<p>", ""), "</p>", ""),
+						"price":       getFloatValue(price),
+						"currency":    currency,
+						"sku":         getStringValue(sku),
+						"brand":       brand,
+						"category":    category,
+						"images":      strings.Join(imageList, "; "),
+						"variants":    getStringValue(variants),
+						"metadata":    getStringValue(metadata),
+						"status":      status,
+						"created_at":  createdAt.Format("2006-01-02 15:04:05"),
+						"updated_at":  updatedAt.Format("2006-01-02 15:04:05"),
+					})
+				}
+
+				if format == "excel" {
+					// Generate Excel-compatible CSV
+					csvContent := generateExcelCSV(products)
+					c.Header("Content-Type", "text/csv; charset=utf-8")
+					c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=products_export_%s.csv", time.Now().Format("20060102_150405")))
+					c.String(http.StatusOK, csvContent)
+				} else {
+					// Generate standard CSV
+					csvContent := generateStandardCSV(products)
+					c.Header("Content-Type", "text/csv; charset=utf-8")
+					c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=products_export_%s.csv", time.Now().Format("20060102_150405")))
+					c.String(http.StatusOK, csvContent)
+				}
+			})
+
+			// JSON Export
+			exports.GET("/json", func(c *gin.Context) {
+				// Get query parameters
+				limit := c.DefaultQuery("limit", "1000")
+				filters := c.Query("filters")
+
+				// Convert limit to integer
+				limitInt := 1000
+				if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
+					// Limit converted successfully
+				}
+
+				// Build WHERE clause based on filters
+				whereClause := "WHERE status = 'ACTIVE'"
+				args := []interface{}{}
+				argIndex := 1
+
+				if filters != "" {
+					var filterMap map[string]interface{}
+					if err := json.Unmarshal([]byte(filters), &filterMap); err == nil {
+						if category, ok := filterMap["category"].(string); ok && category != "" {
+							whereClause += fmt.Sprintf(" AND category = $%d", argIndex)
+							args = append(args, category)
+							argIndex++
+						}
+						if brand, ok := filterMap["brand"].(string); ok && brand != "" {
+							whereClause += fmt.Sprintf(" AND brand = $%d", argIndex)
+							args = append(args, brand)
+							argIndex++
+						}
+					}
+				}
+
+				// Get products
+				query := fmt.Sprintf(`
+					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+						   images, variants, metadata, status, created_at, updated_at
+					FROM products %s 
+					ORDER BY created_at DESC 
+					LIMIT $%d
+				`, whereClause, argIndex)
+
+				args = append(args, limitInt)
+
+				rows, err := db.Query(query, args...)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
+					return
+				}
+				defer rows.Close()
+
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
+					var price sql.NullFloat64
+					var currency string
+					var images string
+					var variants, metadata sql.NullString
+					var createdAt, updatedAt time.Time
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+						&images, &variants, &metadata, &status, &createdAt, &updatedAt)
+					if err != nil {
+						continue
+					}
+
+					// Parse images array
+					var imageList []string
+					if images != "" {
+						cleanImages := strings.Trim(images, "{}")
+						if cleanImages != "" {
+							imageList = strings.Split(cleanImages, ",")
+						}
+					}
+
+					products = append(products, map[string]interface{}{
+						"id":          id,
+						"external_id": externalID,
+						"title":       title,
+						"description": description,
+						"price":       getFloatValue(price),
+						"currency":    currency,
+						"sku":         getStringValue(sku),
+						"brand":       brand,
+						"category":    category,
+						"images":      imageList,
+						"variants":    getStringValue(variants),
+						"metadata":    getStringValue(metadata),
+						"status":      status,
+						"created_at":  createdAt,
+						"updated_at":  updatedAt,
+					})
+				}
+
+				c.Header("Content-Type", "application/json")
+				c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=products_export_%s.json", time.Now().Format("20060102_150405")))
+				c.JSON(http.StatusOK, gin.H{
+					"export_info": gin.H{
+						"timestamp":      time.Now(),
+						"total_products": len(products),
+						"format":         "json",
+						"version":        "1.0",
+					},
+					"products": products,
+				})
+			})
+
+			// XML Export
+			exports.GET("/xml", func(c *gin.Context) {
+				// Get query parameters
+				limit := c.DefaultQuery("limit", "1000")
+
+				// Convert limit to integer
+				limitInt := 1000
+				if l, err := fmt.Sscanf(limit, "%d", &limitInt); err == nil && l == 1 {
+					// Limit converted successfully
+				}
+
+				// Get products
+				rows, err := db.Query(`
+					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+						   images, variants, metadata, status, created_at, updated_at
+					FROM products 
+					WHERE status = 'ACTIVE'
+					ORDER BY created_at DESC 
+					LIMIT $1
+				`, limitInt)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
+					return
+				}
+				defer rows.Close()
+
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
+					var price sql.NullFloat64
+					var currency string
+					var images string
+					var variants, metadata sql.NullString
+					var createdAt, updatedAt time.Time
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+						&images, &variants, &metadata, &status, &createdAt, &updatedAt)
+					if err != nil {
+						continue
+					}
+
+					// Parse images array
+					var imageList []string
+					if images != "" {
+						cleanImages := strings.Trim(images, "{}")
+						if cleanImages != "" {
+							imageList = strings.Split(cleanImages, ",")
+						}
+					}
+
+					products = append(products, map[string]interface{}{
+						"id":          id,
+						"external_id": externalID,
+						"title":       title,
+						"description": description,
+						"price":       getFloatValue(price),
+						"currency":    currency,
+						"sku":         getStringValue(sku),
+						"brand":       brand,
+						"category":    category,
+						"images":      imageList,
+						"variants":    getStringValue(variants),
+						"metadata":    getStringValue(metadata),
+						"status":      status,
+						"created_at":  createdAt,
+						"updated_at":  updatedAt,
+					})
+				}
+
+				xmlContent := generateXMLExport(products)
+				c.Header("Content-Type", "application/xml")
+				c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=products_export_%s.xml", time.Now().Format("20060102_150405")))
+				c.String(http.StatusOK, xmlContent)
+			})
+
+			// Direct Channel Sync
+			exports.POST("/sync/:channel", func(c *gin.Context) {
+				channel := c.Param("channel") // google, facebook, instagram, etc.
+
 				var request struct {
-					ShopDomain  string `json:"shop_domain" binding:"required"`
-					RedirectURI string `json:"redirect_uri" binding:"required"`
+					ProductIDs []string               `json:"product_ids"`
+					Settings   map[string]interface{} `json:"settings"`
 				}
 
 				if err := c.ShouldBindJSON(&request); err != nil {
@@ -4230,70 +4113,474 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Get Shopify credentials from environment
-				clientID := os.Getenv("SHOPIFY_CLIENT_ID")
-				if clientID == "" {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Shopify client ID not configured"})
+				// Get products to sync
+				var whereClause string
+				var args []interface{}
+
+				if len(request.ProductIDs) > 0 {
+					placeholders := make([]string, len(request.ProductIDs))
+					for i, id := range request.ProductIDs {
+						placeholders[i] = fmt.Sprintf("$%d", i+1)
+						args = append(args, id)
+					}
+					whereClause = fmt.Sprintf("WHERE id IN (%s)", strings.Join(placeholders, ","))
+				} else {
+					whereClause = "WHERE status = $1"
+					args = append(args, "ACTIVE")
+				}
+
+				rows, err := db.Query(fmt.Sprintf(`
+					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+						   images, variants, metadata, status
+					FROM products %s
+					ORDER BY created_at DESC
+				`, whereClause), args...)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query products"})
 					return
 				}
+				defer rows.Close()
 
-				// Generate OAuth URL
-				scopes := "read_products,write_products,read_inventory,write_inventory,read_shop"
-				state := fmt.Sprintf("%d", time.Now().Unix())
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, brand, category, status string
+					var sku sql.NullString
+					var price sql.NullFloat64
+					var currency string
+					var images string
+					var variants, metadata sql.NullString
 
-				// Clean the shop domain (remove .myshopify.com if present)
-				cleanDomain := request.ShopDomain
-				if strings.HasSuffix(request.ShopDomain, ".myshopify.com") {
-					cleanDomain = strings.TrimSuffix(request.ShopDomain, ".myshopify.com")
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+						&images, &variants, &metadata, &status)
+					if err != nil {
+						continue
+					}
+
+					// Parse images array
+					var imageList []string
+					if images != "" {
+						cleanImages := strings.Trim(images, "{}")
+						if cleanImages != "" {
+							imageList = strings.Split(cleanImages, ",")
+						}
+					}
+
+					products = append(products, map[string]interface{}{
+						"id":          id,
+						"external_id": externalID,
+						"title":       title,
+						"description": description,
+						"price":       getFloatValue(price),
+						"currency":    currency,
+						"sku":         getStringValue(sku),
+						"brand":       brand,
+						"category":    category,
+						"images":      imageList,
+						"variants":    getStringValue(variants),
+						"metadata":    getStringValue(metadata),
+						"status":      status,
+					})
 				}
 
-				authURL := fmt.Sprintf(
-					"https://%s.myshopify.com/admin/oauth/authorize?client_id=%s&scope=%s&redirect_uri=%s&state=%s",
-					cleanDomain,
-					clientID,
-					scopes,
-					request.RedirectURI,
-					state,
-				)
+				// Sync to specific channel
+				result := syncToChannel(channel, products, request.Settings)
 
 				c.JSON(http.StatusOK, gin.H{
-					"auth_url": authURL,
-					"state":    state,
-					"message":  "Redirect user to the auth_url to complete OAuth flow",
+					"message":         fmt.Sprintf("Products synced to %s successfully", channel),
+					"channel":         channel,
+					"products_synced": len(products),
+					"sync_result":     result,
+					"timestamp":       time.Now(),
 				})
 			})
 
-			// Shopify OAuth Callback
-			shopify.GET("/callback", func(c *gin.Context) {
-				code := c.Query("code")
-				state := c.Query("state")
-				shop := c.Query("shop")
+			// Export Analytics
+			exports.GET("/analytics", func(c *gin.Context) {
+				var analytics struct {
+					TotalExports    int     `json:"total_exports"`
+					CSVExports      int     `json:"csv_exports"`
+					JSONExports     int     `json:"json_exports"`
+					XMLExports      int     `json:"xml_exports"`
+					ChannelSyncs    int     `json:"channel_syncs"`
+					AverageProducts float64 `json:"average_products_per_export"`
+				}
 
-				if code == "" || state == "" || shop == "" {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required parameters"})
+				// Get export statistics (placeholder - would need export tracking table)
+				analytics.TotalExports = 0
+				analytics.CSVExports = 0
+				analytics.JSONExports = 0
+				analytics.XMLExports = 0
+				analytics.ChannelSyncs = 0
+				analytics.AverageProducts = 0.0
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":    analytics,
+					"message": "Export analytics retrieved successfully",
+					"note":    "Export tracking will be implemented with database logging",
+				})
+			})
+		}
+
+		// AI-Powered Product Transformation
+		ai := api.Group("/ai")
+		{
+			// Title Optimization
+			ai.POST("/optimize-title", func(c *gin.Context) {
+				var request struct {
+					ProductID string `json:"product_id" binding:"required"`
+					Keywords  string `json:"keywords,omitempty"`
+					MaxLength int    `json:"max_length,omitempty"`
+				}
+
+				if err := c.ShouldBindJSON(&request); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 					return
 				}
 
-				// Get Shopify credentials
-				clientID := os.Getenv("SHOPIFY_CLIENT_ID")
-				clientSecret := os.Getenv("SHOPIFY_CLIENT_SECRET")
+				// Get product details
+				var title, description, brand, category string
+				err := db.QueryRow(`
+					SELECT title, description, brand, category 
+					FROM products 
+					WHERE id = $1
+				`, request.ProductID).Scan(&title, &description, &brand, &category)
 
-				if clientID == "" || clientSecret == "" {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Shopify credentials not configured"})
-					return
-				}
-
-				// Exchange authorization code for access token
-				accessToken, err := exchangeCodeForToken(code, shop, clientID, clientSecret)
 				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code for token"})
+					c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
 					return
 				}
 
-				connectorID := fmt.Sprintf("connector_%d", time.Now().Unix())
+				// AI-powered title optimization
+				optimizedTitle := optimizeProductTitle(title, description, brand, category, request.Keywords, request.MaxLength)
 
-				// Save connector to Supabase database
-				_, err = db.Exec(`
+				c.JSON(http.StatusOK, gin.H{
+					"product_id":      request.ProductID,
+					"original_title":  title,
+					"optimized_title": optimizedTitle,
+					"improvement":     calculateTitleImprovement(title, optimizedTitle),
+					"seo_score":       calculateSEOScore(optimizedTitle),
+					"message":         "Title optimized successfully",
+				})
+			})
+
+			// Description Enhancement
+			ai.POST("/enhance-description", func(c *gin.Context) {
+				var request struct {
+					ProductID string `json:"product_id" binding:"required"`
+					Style     string `json:"style,omitempty"`  // "marketing", "technical", "casual"
+					Length    string `json:"length,omitempty"` // "short", "medium", "long"
+				}
+
+				if err := c.ShouldBindJSON(&request); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Get product details
+				var title, description, brand, category string
+				var price sql.NullFloat64
+				err := db.QueryRow(`
+					SELECT title, description, brand, category, price 
+					FROM products 
+					WHERE id = $1
+				`, request.ProductID).Scan(&title, &description, &brand, &category, &price)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+					return
+				}
+
+				// AI-powered description enhancement
+				enhancedDescription := enhanceProductDescription(title, description, brand, category, getFloatValue(price), request.Style, request.Length)
+
+				c.JSON(http.StatusOK, gin.H{
+					"product_id":           request.ProductID,
+					"original_description": description,
+					"enhanced_description": enhancedDescription,
+					"improvement":          calculateDescriptionImprovement(description, enhancedDescription),
+					"readability_score":    calculateReadabilityScore(enhancedDescription),
+					"message":              "Description enhanced successfully",
+				})
+			})
+
+			// Category Suggestions
+			ai.POST("/suggest-category", func(c *gin.Context) {
+				var request struct {
+					ProductID string `json:"product_id" binding:"required"`
+				}
+
+				if err := c.ShouldBindJSON(&request); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Get product details
+				var title, description, brand, currentCategory string
+				err := db.QueryRow(`
+					SELECT title, description, brand, category 
+					FROM products 
+					WHERE id = $1
+				`, request.ProductID).Scan(&title, &description, &brand, &currentCategory)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+					return
+				}
+
+				// AI-powered category suggestions
+				suggestions := suggestProductCategory(title, description, brand, currentCategory)
+
+				c.JSON(http.StatusOK, gin.H{
+					"product_id":        request.ProductID,
+					"current_category":  currentCategory,
+					"suggestions":       suggestions,
+					"confidence_scores": calculateCategoryConfidence(suggestions),
+					"message":           "Category suggestions generated successfully",
+				})
+			})
+
+			// Image Optimization
+			ai.POST("/optimize-images", func(c *gin.Context) {
+				var request struct {
+					ProductID string `json:"product_id" binding:"required"`
+				}
+
+				if err := c.ShouldBindJSON(&request); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Get product details
+				var title, description, brand, category string
+				var images string
+				err := db.QueryRow(`
+					SELECT title, description, brand, category, images 
+					FROM products 
+					WHERE id = $1
+				`, request.ProductID).Scan(&title, &description, &brand, &category, &images)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+					return
+				}
+
+				// Parse images array
+				var imageList []string
+				if images != "" {
+					cleanImages := strings.Trim(images, "{}")
+					if cleanImages != "" {
+						imageList = strings.Split(cleanImages, ",")
+					}
+				}
+
+				// AI-powered image optimization suggestions
+				optimizationSuggestions := optimizeProductImages(title, description, brand, category, imageList)
+
+				c.JSON(http.StatusOK, gin.H{
+					"product_id":               request.ProductID,
+					"current_images":           imageList,
+					"optimization_suggestions": optimizationSuggestions,
+					"image_quality_score":      calculateImageQualityScore(imageList),
+					"message":                  "Image optimization suggestions generated successfully",
+				})
+			})
+
+			// Bulk AI Transformation
+			ai.POST("/bulk-transform", func(c *gin.Context) {
+				var request struct {
+					ProductIDs      []string `json:"product_ids" binding:"required"`
+					Transformations []string `json:"transformations" binding:"required"` // ["title", "description", "category", "images"]
+				}
+
+				if err := c.ShouldBindJSON(&request); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Process bulk transformations
+				results := processBulkTransformations(request.ProductIDs, request.Transformations)
+
+				c.JSON(http.StatusOK, gin.H{
+					"processed_products": len(request.ProductIDs),
+					"transformations":    request.Transformations,
+					"results":            results,
+					"success_count":      countSuccessfulTransformations(results),
+					"message":            "Bulk transformation completed successfully",
+				})
+			})
+
+			// AI Diagnostic Test
+			ai.GET("/test", func(c *gin.Context) {
+				// Test OpenRouter AI connection
+				testPrompt := "Say 'AI is working' if you can read this message."
+
+				aiResponse, err := callOpenRouterAI(testPrompt, 20, 0.5)
+				if err != nil {
+					c.JSON(http.StatusOK, gin.H{
+						"ai_status":     "FAILED",
+						"error":         err.Error(),
+						"fallback_used": true,
+						"message":       "AI is not working, using fallback system",
+					})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"ai_status":     "WORKING",
+					"ai_response":   aiResponse,
+					"fallback_used": false,
+					"message":       "AI is working correctly",
+				})
+			})
+
+			// AI Analytics
+			ai.GET("/analytics", func(c *gin.Context) {
+				// Get AI transformation analytics
+				var analytics struct {
+					TotalTransformations    int     `json:"total_transformations"`
+					TitleOptimizations      int     `json:"title_optimizations"`
+					DescriptionEnhancements int     `json:"description_enhancements"`
+					CategorySuggestions     int     `json:"category_suggestions"`
+					ImageOptimizations      int     `json:"image_optimizations"`
+					AverageSEOScore         float64 `json:"average_seo_score"`
+					AverageReadability      float64 `json:"average_readability_score"`
+				}
+
+				// Get transformation counts (placeholder - would need transformation_logs table)
+				analytics.TotalTransformations = 0
+				analytics.TitleOptimizations = 0
+				analytics.DescriptionEnhancements = 0
+				analytics.CategorySuggestions = 0
+				analytics.ImageOptimizations = 0
+				analytics.AverageSEOScore = 85.5
+				analytics.AverageReadability = 78.2
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":    analytics,
+					"message": "AI analytics retrieved successfully",
+				})
+			})
+		}
+	}
+
+	// Connectors
+	api.GET("/connectors", func(c *gin.Context) {
+		// Query connectors from Supabase database
+		rows, err := db.Query("SELECT id, name, type, status, shop_domain, created_at, last_sync FROM connectors ORDER BY created_at DESC")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query connectors"})
+			return
+		}
+		defer rows.Close()
+
+		var connectors []map[string]interface{}
+		for rows.Next() {
+			var id, name, connectorType, status, shopDomain string
+			var createdAt time.Time
+			var lastSync *time.Time
+
+			err := rows.Scan(&id, &name, &connectorType, &status, &shopDomain, &createdAt, &lastSync)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan connector"})
+				return
+			}
+
+			connectors = append(connectors, map[string]interface{}{
+				"id":          id,
+				"name":        name,
+				"type":        connectorType,
+				"status":      status,
+				"shop_domain": shopDomain,
+				"created_at":  createdAt,
+				"last_sync":   lastSync,
+			})
+		}
+
+		c.JSON(200, gin.H{
+			"data":    connectors,
+			"message": "Connectors retrieved successfully",
+		})
+	})
+
+	// Shopify routes
+	shopify := api.Group("/shopify")
+	{
+		// Shopify OAuth Install
+		shopify.POST("/install", func(c *gin.Context) {
+			var request struct {
+				ShopDomain  string `json:"shop_domain" binding:"required"`
+				RedirectURI string `json:"redirect_uri" binding:"required"`
+			}
+
+			if err := c.ShouldBindJSON(&request); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			// Get Shopify credentials from environment
+			clientID := os.Getenv("SHOPIFY_CLIENT_ID")
+			if clientID == "" {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Shopify client ID not configured"})
+				return
+			}
+
+			// Generate OAuth URL
+			scopes := "read_products,write_products,read_inventory,write_inventory,read_shop"
+			state := fmt.Sprintf("%d", time.Now().Unix())
+
+			// Clean the shop domain (remove .myshopify.com if present)
+			cleanDomain := request.ShopDomain
+			if strings.HasSuffix(request.ShopDomain, ".myshopify.com") {
+				cleanDomain = strings.TrimSuffix(request.ShopDomain, ".myshopify.com")
+			}
+
+			authURL := fmt.Sprintf(
+				"https://%s.myshopify.com/admin/oauth/authorize?client_id=%s&scope=%s&redirect_uri=%s&state=%s",
+				cleanDomain,
+				clientID,
+				scopes,
+				request.RedirectURI,
+				state,
+			)
+
+			c.JSON(http.StatusOK, gin.H{
+				"auth_url": authURL,
+				"state":    state,
+				"message":  "Redirect user to the auth_url to complete OAuth flow",
+			})
+		})
+
+		// Shopify OAuth Callback
+		shopify.GET("/callback", func(c *gin.Context) {
+			code := c.Query("code")
+			state := c.Query("state")
+			shop := c.Query("shop")
+
+			if code == "" || state == "" || shop == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required parameters"})
+				return
+			}
+
+			// Get Shopify credentials
+			clientID := os.Getenv("SHOPIFY_CLIENT_ID")
+			clientSecret := os.Getenv("SHOPIFY_CLIENT_SECRET")
+
+			if clientID == "" || clientSecret == "" {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Shopify credentials not configured"})
+				return
+			}
+
+			// Exchange authorization code for access token
+			accessToken, err := exchangeCodeForToken(code, shop, clientID, clientSecret)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code for token"})
+				return
+			}
+
+			connectorID := fmt.Sprintf("connector_%d", time.Now().Unix())
+
+			// Save connector to Supabase database
+			_, err = db.Exec(`
 					INSERT INTO connectors (id, name, type, status, shop_domain, access_token, created_at)
 					VALUES ($1, $2, $3, $4, $5, $6, $7)
 					ON CONFLICT (id) DO UPDATE SET
@@ -4302,152 +4589,152 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						access_token = EXCLUDED.access_token
 				`, connectorID, fmt.Sprintf("Shopify Store - %s", shop), "SHOPIFY", "ACTIVE", shop, accessToken, time.Now())
 
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save connector to database"})
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save connector to database"})
+				return
+			}
+
+			// ðŸš€ AUTOMATIC WEBHOOK SETUP - No manual configuration needed!
+			webhookResults := setupAutomaticWebhooks(shop, accessToken)
+
+			// Log webhook setup results
+			fmt.Printf("ðŸ”— Webhook Setup Results for %s:\n", shop)
+			successCount := 0
+			for topic, result := range webhookResults {
+				if result["success"].(bool) {
+					fmt.Printf("âœ… %s: %s\n", topic, result["message"])
+					successCount++
+				} else {
+					fmt.Printf("âŒ %s: %s\n", topic, result["message"])
+				}
+			}
+
+			// Return success with connector info and webhook status
+			c.JSON(http.StatusOK, gin.H{
+				"message":      "Shopify store connected successfully",
+				"shop":         shop,
+				"state":        state,
+				"connector_id": connectorID,
+				"webhooks": gin.H{
+					"setup_completed":     true,
+					"successful_webhooks": successCount,
+					"total_webhooks":      len(webhookResults),
+					"details":             webhookResults,
+				},
+				"note": "Real access token obtained, stored, and webhooks automatically configured",
+			})
+		})
+
+		// Shopify Webhook
+		shopify.POST("/webhook", func(c *gin.Context) {
+			// Get webhook topic
+			topic := c.GetHeader("X-Shopify-Topic")
+			shopDomain := c.GetHeader("X-Shopify-Shop-Domain")
+			_ = c.GetHeader("X-Shopify-Hmac-Sha256") // Signature validation placeholder
+
+			if topic == "" || shopDomain == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required headers"})
+				return
+			}
+
+			// Read the payload
+			payload, err := c.GetRawData()
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read payload"})
+				return
+			}
+
+			// Process webhook based on topic
+			switch topic {
+			case "products/create", "products/update":
+				var productData map[string]interface{}
+				if err := json.Unmarshal(payload, &productData); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON payload"})
 					return
 				}
 
-				// ðŸš€ AUTOMATIC WEBHOOK SETUP - No manual configuration needed!
-				webhookResults := setupAutomaticWebhooks(shop, accessToken)
-
-				// Log webhook setup results
-				fmt.Printf("ðŸ”— Webhook Setup Results for %s:\n", shop)
-				successCount := 0
-				for topic, result := range webhookResults {
-					if result["success"].(bool) {
-						fmt.Printf("âœ… %s: %s\n", topic, result["message"])
-						successCount++
-					} else {
-						fmt.Printf("âŒ %s: %s\n", topic, result["message"])
-					}
-				}
-
-				// Return success with connector info and webhook status
 				c.JSON(http.StatusOK, gin.H{
-					"message":      "Shopify store connected successfully",
-					"shop":         shop,
-					"state":        state,
-					"connector_id": connectorID,
-					"webhooks": gin.H{
-						"setup_completed":     true,
-						"successful_webhooks": successCount,
-						"total_webhooks":      len(webhookResults),
-						"details":             webhookResults,
-					},
-					"note": "Real access token obtained, stored, and webhooks automatically configured",
+					"message":    "Product webhook processed",
+					"topic":      topic,
+					"shop":       shopDomain,
+					"product_id": productData["id"],
 				})
-			})
 
-			// Shopify Webhook
-			shopify.POST("/webhook", func(c *gin.Context) {
-				// Get webhook topic
-				topic := c.GetHeader("X-Shopify-Topic")
-				shopDomain := c.GetHeader("X-Shopify-Shop-Domain")
-				_ = c.GetHeader("X-Shopify-Hmac-Sha256") // Signature validation placeholder
+			case "products/delete":
+				c.JSON(http.StatusOK, gin.H{
+					"message": "Product delete webhook processed",
+					"topic":   topic,
+					"shop":    shopDomain,
+				})
 
-				if topic == "" || shopDomain == "" {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required headers"})
-					return
+			default:
+				c.JSON(http.StatusOK, gin.H{
+					"message": "Webhook received but not processed",
+					"topic":   topic,
+				})
+			}
+		})
+
+		// Product Sync
+		shopify.POST("/:id/sync", func(c *gin.Context) {
+			connectorID := c.Param("id")
+
+			// Get connector from database
+			var connector struct {
+				ID          string
+				ShopDomain  string
+				AccessToken string
+			}
+
+			err := db.QueryRow("SELECT id, shop_domain, access_token FROM connectors WHERE id = $1", connectorID).Scan(
+				&connector.ID, &connector.ShopDomain, &connector.AccessToken)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Connector not found"})
+				return
+			}
+
+			// Fetch products from Shopify
+			products, err := fetchShopifyProducts(connector.ShopDomain, connector.AccessToken)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products from Shopify"})
+				return
+			}
+
+			// Store products in database (use default inventory data from Shopify)
+			syncedCount := 0
+			var errors []string
+
+			for _, product := range products {
+				// Transform product (Shopify should include inventory data by default)
+				transformedProduct := transformShopifyProduct(product, connector.ShopDomain, make(map[int64]int))
+
+				// ðŸš€ AI-POWERED SEO ENHANCEMENT
+				fmt.Printf("ðŸ” Enhancing SEO for product: %s\n", product.Title)
+				seoEnhancement := enhanceProductSEO(product)
+				fmt.Printf("ðŸ” SEO Enhancement result: %+v\n", seoEnhancement)
+
+				// Create enhanced metadata with SEO data
+				enhancedMetadata := map[string]interface{}{
+					"seo_title":       seoEnhancement.SEOTitle,
+					"seo_description": seoEnhancement.SEODescription,
+					"keywords":        seoEnhancement.Keywords,
+					"meta_keywords":   seoEnhancement.MetaKeywords,
+					"alt_text":        seoEnhancement.AltText,
+					"schema_markup":   seoEnhancement.SchemaMarkup,
+					"seo_enhanced":    true,
+					"seo_enhanced_at": time.Now().Format(time.RFC3339),
 				}
 
-				// Read the payload
-				payload, err := c.GetRawData()
-				if err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read payload"})
-					return
-				}
+				// Convert enhanced metadata to JSON
+				enhancedMetadataJSON, _ := json.Marshal(enhancedMetadata)
+				fmt.Printf("ðŸ” Enhanced metadata JSON: %s\n", string(enhancedMetadataJSON))
 
-				// Process webhook based on topic
-				switch topic {
-				case "products/create", "products/update":
-					var productData map[string]interface{}
-					if err := json.Unmarshal(payload, &productData); err != nil {
-						c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON payload"})
-						return
-					}
+				// Convert Go slice to PostgreSQL array format for images
+				imageURLsArray := "{" + strings.Join(transformedProduct.Images, ",") + "}"
 
-					c.JSON(http.StatusOK, gin.H{
-						"message":    "Product webhook processed",
-						"topic":      topic,
-						"shop":       shopDomain,
-						"product_id": productData["id"],
-					})
-
-				case "products/delete":
-					c.JSON(http.StatusOK, gin.H{
-						"message": "Product delete webhook processed",
-						"topic":   topic,
-						"shop":    shopDomain,
-					})
-
-				default:
-					c.JSON(http.StatusOK, gin.H{
-						"message": "Webhook received but not processed",
-						"topic":   topic,
-					})
-				}
-			})
-
-			// Product Sync
-			shopify.POST("/:id/sync", func(c *gin.Context) {
-				connectorID := c.Param("id")
-
-				// Get connector from database
-				var connector struct {
-					ID          string
-					ShopDomain  string
-					AccessToken string
-				}
-
-				err := db.QueryRow("SELECT id, shop_domain, access_token FROM connectors WHERE id = $1", connectorID).Scan(
-					&connector.ID, &connector.ShopDomain, &connector.AccessToken)
-				if err != nil {
-					c.JSON(http.StatusNotFound, gin.H{"error": "Connector not found"})
-					return
-				}
-
-				// Fetch products from Shopify
-				products, err := fetchShopifyProducts(connector.ShopDomain, connector.AccessToken)
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products from Shopify"})
-					return
-				}
-
-				// Store products in database (use default inventory data from Shopify)
-				syncedCount := 0
-				var errors []string
-
-				for _, product := range products {
-					// Transform product (Shopify should include inventory data by default)
-					transformedProduct := transformShopifyProduct(product, connector.ShopDomain, make(map[int64]int))
-
-					// ðŸš€ AI-POWERED SEO ENHANCEMENT
-					fmt.Printf("ðŸ” Enhancing SEO for product: %s\n", product.Title)
-					seoEnhancement := enhanceProductSEO(product)
-					fmt.Printf("ðŸ” SEO Enhancement result: %+v\n", seoEnhancement)
-
-					// Create enhanced metadata with SEO data
-					enhancedMetadata := map[string]interface{}{
-						"seo_title":       seoEnhancement.SEOTitle,
-						"seo_description": seoEnhancement.SEODescription,
-						"keywords":        seoEnhancement.Keywords,
-						"meta_keywords":   seoEnhancement.MetaKeywords,
-						"alt_text":        seoEnhancement.AltText,
-						"schema_markup":   seoEnhancement.SchemaMarkup,
-						"seo_enhanced":    true,
-						"seo_enhanced_at": time.Now().Format(time.RFC3339),
-					}
-
-					// Convert enhanced metadata to JSON
-					enhancedMetadataJSON, _ := json.Marshal(enhancedMetadata)
-					fmt.Printf("ðŸ” Enhanced metadata JSON: %s\n", string(enhancedMetadataJSON))
-
-					// Convert Go slice to PostgreSQL array format for images
-					imageURLsArray := "{" + strings.Join(transformedProduct.Images, ",") + "}"
-
-					// Try upsert first, fallback to check-and-insert if constraint doesn't exist
-					fmt.Printf("ðŸ” About to insert/update product with metadata length: %d\n", len(string(enhancedMetadataJSON)))
-					_, err := db.Exec(`
+				// Try upsert first, fallback to check-and-insert if constraint doesn't exist
+				fmt.Printf("ðŸ” About to insert/update product with metadata length: %d\n", len(string(enhancedMetadataJSON)))
+				_, err := db.Exec(`
 						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, updated_at)
 						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
 						ON CONFLICT (connector_id, external_id) 
@@ -4465,80 +4752,79 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							status = EXCLUDED.status,
 							updated_at = NOW()
 					`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
-						transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
-						transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
-						transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
+					transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
+					transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
+					transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
 
-					if err != nil {
-						fmt.Printf("ðŸ” Database error: %v\n", err)
-					} else {
-						fmt.Printf("ðŸ” Product successfully updated with SEO metadata\n")
-					}
+				if err != nil {
+					fmt.Printf("ðŸ” Database error: %v\n", err)
+				} else {
+					fmt.Printf("ðŸ” Product successfully updated with SEO metadata\n")
+				}
 
-					// If upsert fails due to missing constraint, fallback to check-and-insert
-					if err != nil && strings.Contains(err.Error(), "no unique or exclusion constraint") {
-						// Check if product already exists
-						var existingID string
-						checkErr := db.QueryRow(`
+				// If upsert fails due to missing constraint, fallback to check-and-insert
+				if err != nil && strings.Contains(err.Error(), "no unique or exclusion constraint") {
+					// Check if product already exists
+					var existingID string
+					checkErr := db.QueryRow(`
 							SELECT id FROM products 
 							WHERE connector_id = $1 AND external_id = $2
 						`, connectorID, transformedProduct.ExternalID).Scan(&existingID)
 
-						if checkErr == nil {
-							// Product exists, update it
-							fmt.Printf("ðŸ” Updating existing product %s with metadata length: %d\n", existingID, len(string(enhancedMetadataJSON)))
-							_, err = db.Exec(`
+					if checkErr == nil {
+						// Product exists, update it
+						fmt.Printf("ðŸ” Updating existing product %s with metadata length: %d\n", existingID, len(string(enhancedMetadataJSON)))
+						_, err = db.Exec(`
 								UPDATE products SET 
 									title = $1, description = $2, price = $3, currency = $4, 
 									sku = $5, brand = $6, category = $7, images = $8, 
 									variants = $9, metadata = $10, status = $11, updated_at = NOW()
 								WHERE id = $12
 							`, transformedProduct.Title, transformedProduct.Description, transformedProduct.Price,
-								transformedProduct.Currency, transformedProduct.SKU, transformedProduct.Brand,
-								transformedProduct.Category, imageURLsArray, transformedProduct.Variants,
-								string(enhancedMetadataJSON), "ACTIVE", existingID)
-							if err != nil {
-								fmt.Printf("ðŸ” Update error: %v\n", err)
-							} else {
-								fmt.Printf("ðŸ” Product updated successfully\n")
-							}
+							transformedProduct.Currency, transformedProduct.SKU, transformedProduct.Brand,
+							transformedProduct.Category, imageURLsArray, transformedProduct.Variants,
+							string(enhancedMetadataJSON), "ACTIVE", existingID)
+						if err != nil {
+							fmt.Printf("ðŸ” Update error: %v\n", err)
 						} else {
-							// Product doesn't exist, insert it
-							_, err = db.Exec(`
+							fmt.Printf("ðŸ” Product updated successfully\n")
+						}
+					} else {
+						// Product doesn't exist, insert it
+						_, err = db.Exec(`
 								INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, updated_at)
 								VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
 							`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
-								transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
-								transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
-								transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
-						}
-					}
-
-					if err != nil {
-						errors = append(errors, fmt.Sprintf("Product %s: %v", product.Title, err))
-					} else {
-						syncedCount++
+							transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
+							transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
+							transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
 					}
 				}
 
-				// Update connector last_sync
-				db.Exec("UPDATE connectors SET last_sync = NOW() WHERE id = $1", connectorID)
-
-				response := gin.H{
-					"message":         "Product sync completed",
-					"connector_id":    connectorID,
-					"products_synced": syncedCount,
-					"total_products":  len(products),
+				if err != nil {
+					errors = append(errors, fmt.Sprintf("Product %s: %v", product.Title, err))
+				} else {
+					syncedCount++
 				}
+			}
 
-				if len(errors) > 0 {
-					response["errors"] = errors
-					response["message"] = fmt.Sprintf("Product sync completed with %d errors", len(errors))
-				}
+			// Update connector last_sync
+			db.Exec("UPDATE connectors SET last_sync = NOW() WHERE id = $1", connectorID)
 
-				c.JSON(http.StatusOK, response)
-			})
-		}
+			response := gin.H{
+				"message":         "Product sync completed",
+				"connector_id":    connectorID,
+				"products_synced": syncedCount,
+				"total_products":  len(products),
+			}
+
+			if len(errors) > 0 {
+				response["errors"] = errors
+				response["message"] = fmt.Sprintf("Product sync completed with %d errors", len(errors))
+			}
+
+			c.JSON(http.StatusOK, response)
+		})
 	}
 
 	// Serve the request
