@@ -3223,6 +3223,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					externalID = providedExternalId
 				}
 
+				// Get connector_id (optional - for linking to Shopify store)
+				connectorID := ""
+				if providedConnectorId, ok := productData["connector_id"].(string); ok && providedConnectorId != "" {
+					connectorID = providedConnectorId
+				}
+
 				// Prepare images as PostgreSQL array
 				var imagesArray []string
 				if images, ok := productData["images"]; ok {
@@ -3300,10 +3306,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Insert product (let database generate UUID for id)
 				var generatedID string
 				err = db.QueryRow(`
-				INSERT INTO products (external_id, title, description, price, currency, sku, gtin, brand, category, images, variants, metadata, shipping, custom_labels, status, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+				INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, gtin, brand, category, images, variants, metadata, shipping, custom_labels, status, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
 				RETURNING id
-			`, externalID, title, description, price, currency, sku, gtin, brand, category, pq.Array(imagesArray), variantsJSON, metadataJSON, shippingJSON, pq.Array(customLabelsArray), "ACTIVE").Scan(&generatedID)
+			`, connectorID, externalID, title, description, price, currency, sku, gtin, brand, category, pq.Array(imagesArray), variantsJSON, metadataJSON, shippingJSON, pq.Array(customLabelsArray), "ACTIVE").Scan(&generatedID)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product: " + err.Error()})
