@@ -216,19 +216,26 @@ func initDB() error {
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
+		fmt.Printf("[ERROR] DATABASE_URL environment variable is not set\n")
 		return fmt.Errorf("DATABASE_URL not set")
 	}
+
+	fmt.Printf("[INFO] Attempting to connect to database...\n")
 
 	var err error
 	db, err = sql.Open("postgres", databaseURL)
 	if err != nil {
+		fmt.Printf("[ERROR] Failed to open database connection: %v\n", err)
 		return err
 	}
 
 	// Test the connection
 	if err = db.Ping(); err != nil {
+		fmt.Printf("[ERROR] Failed to ping database: %v\n", err)
 		return err
 	}
+
+	fmt.Printf("[INFO] Database connection established successfully\n")
 
 	// Create all required tables
 	tables := []string{
@@ -2352,6 +2359,8 @@ func transformShopifyProduct(shopifyProduct ShopifyProduct, shopDomain string, i
 func Handler(w http.ResponseWriter, r *http.Request) {
 	// Initialize database connection
 	if err := initDB(); err != nil {
+		// Log the error for debugging
+		fmt.Printf("[ERROR] Database initialization failed: %v\n", err)
 		http.Error(w, fmt.Sprintf("Database initialization failed: %v", err), http.StatusInternalServerError)
 		return
 	}
