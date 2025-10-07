@@ -3662,15 +3662,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					supabaseURL := os.Getenv("SUPABASE_URL")
 					supabaseKey := os.Getenv("SUPABASE_ANON_KEY")
 
+					fmt.Printf("🔍 Supabase Config - URL: %s, Key: %s\n", supabaseURL, supabaseKey)
+
 					var imageUrl string
 					if supabaseURL != "" && supabaseKey != "" {
 						// Initialize Supabase client
+						fmt.Printf("🚀 Creating Supabase client...\n")
 						client, err := supabase.NewClient(supabaseURL, supabaseKey, nil)
 						if err != nil {
-							fmt.Printf("Error creating Supabase client: %v\n", err)
+							fmt.Printf("❌ Error creating Supabase client: %v\n", err)
 							// Fallback to placeholder
 							imageUrl = fmt.Sprintf("https://picsum.photos/400/300?random=%d", time.Now().UnixNano())
 						} else {
+							fmt.Printf("✅ Supabase client created successfully\n")
 							// Read file content
 							src, err := file.Open()
 							if err != nil {
@@ -3681,19 +3685,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 								// Upload to Supabase Storage using the correct API
 								filePath := fmt.Sprintf("products/%s", filename)
+								fmt.Printf("📤 Uploading to Supabase: bucket=product-images, path=%s\n", filePath)
 								_, err = client.Storage.UploadFile("product-images", filePath, src)
 								if err != nil {
-									fmt.Printf("Error uploading to Supabase: %v\n", err)
+									fmt.Printf("❌ Error uploading to Supabase: %v\n", err)
 									// Fallback to placeholder
 									imageUrl = fmt.Sprintf("https://picsum.photos/400/300?random=%d", time.Now().UnixNano())
 								} else {
 									// Get public URL
 									imageUrl = fmt.Sprintf("%s/storage/v1/object/public/product-images/%s", supabaseURL, filePath)
+									fmt.Printf("✅ Upload successful! URL: %s\n", imageUrl)
 								}
 							}
 						}
 					} else {
 						// No Supabase config, use placeholder
+						fmt.Printf("⚠️ No Supabase config found, using placeholder image\n")
 						imageUrl = fmt.Sprintf("https://picsum.photos/400/300?random=%d", time.Now().UnixNano())
 					}
 
