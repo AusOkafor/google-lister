@@ -3659,7 +3659,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 					// For now, we'll store the file info and return a placeholder URL
 					// In production, you'd save the file to a storage service (AWS S3, etc.)
-					imageUrl := fmt.Sprintf("/uploads/products/%s", filename)
+					// Return full URL for proper image display
+					imageUrl := fmt.Sprintf("https://product-lister-eight.vercel.app/uploads/products/%s", filename)
 					imageUrls = append(imageUrls, imageUrl)
 
 					// Log the upload (in production, save to actual storage)
