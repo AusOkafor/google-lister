@@ -3213,14 +3213,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Generate ID and SKU if not provided
-				id := fmt.Sprintf("product_%d", time.Now().Unix())
+				// Generate external_id (Shopify product ID) and SKU if not provided
+				externalID := fmt.Sprintf("product_%d", time.Now().Unix())
 				sku := fmt.Sprintf("SKU-%d", time.Now().Unix())
 				if providedSku, ok := productData["sku"].(string); ok && providedSku != "" {
 					sku = providedSku
 				}
 				if providedExternalId, ok := productData["external_id"].(string); ok && providedExternalId != "" {
-					id = providedExternalId
+					externalID = providedExternalId
 				}
 
 				// Prepare JSON fields
@@ -3294,7 +3294,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				INSERT INTO products (external_id, title, description, price, currency, sku, gtin, brand, category, images, variants, metadata, shipping, custom_labels, status, created_at, updated_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
 				RETURNING id
-			`, id, title, description, price, currency, sku, gtin, brand, category, imagesJSON, variantsJSON, metadataJSON, shippingJSON, customLabelsJSON, "ACTIVE").Scan(&generatedID)
+			`, externalID, title, description, price, currency, sku, gtin, brand, category, imagesJSON, variantsJSON, metadataJSON, shippingJSON, customLabelsJSON, "ACTIVE").Scan(&generatedID)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product: " + err.Error()})
@@ -3304,7 +3304,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				c.JSON(http.StatusCreated, gin.H{
 					"message":     "Product created successfully",
 					"id":          generatedID,
-					"external_id": id,
+					"external_id": externalID,
 				})
 			})
 
