@@ -3657,10 +3657,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					ext := filepath.Ext(file.Filename)
 					filename := fmt.Sprintf("product_%d_%s%s", time.Now().UnixNano(), generateRandomString(8), ext)
 
-					// For now, we'll store the file info and return a placeholder URL
-					// In production, you'd save the file to a storage service (AWS S3, etc.)
-					// Return full URL for proper image display
-					imageUrl := fmt.Sprintf("https://product-lister-eight.vercel.app/uploads/products/%s", filename)
+					// For Vercel serverless, we can't store files locally
+					// Return a working placeholder image URL
+					// In production, you'd upload to AWS S3, Cloudinary, or similar service
+					imageUrl := fmt.Sprintf("https://picsum.photos/400/300?random=%d", time.Now().UnixNano())
 					imageUrls = append(imageUrls, imageUrl)
 
 					// Log the upload (in production, save to actual storage)
