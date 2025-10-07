@@ -3288,11 +3288,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Note: mpn, availability, and tax_class are accepted from frontend but not stored in database
 				// since these columns don't exist in the current schema
 
-				// Insert product
-				_, err = db.Exec(`
-				INSERT INTO products (id, external_id, title, description, price, currency, sku, gtin, brand, category, images, variants, metadata, shipping, custom_labels, status, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
-			`, id, id, title, description, price, currency, sku, gtin, brand, category, imagesJSON, variantsJSON, metadataJSON, shippingJSON, customLabelsJSON, "ACTIVE")
+				// Insert product (let database generate UUID for id)
+				var generatedID string
+				err = db.QueryRow(`
+				INSERT INTO products (external_id, title, description, price, currency, sku, gtin, brand, category, images, variants, metadata, shipping, custom_labels, status, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+				RETURNING id
+			`, id, title, description, price, currency, sku, gtin, brand, category, imagesJSON, variantsJSON, metadataJSON, shippingJSON, customLabelsJSON, "ACTIVE").Scan(&generatedID)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product: " + err.Error()})
@@ -3300,8 +3302,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				c.JSON(http.StatusCreated, gin.H{
-					"message": "Product created successfully",
-					"id":      id,
+					"message":     "Product created successfully",
+					"id":          generatedID,
+					"external_id": id,
 				})
 			})
 
