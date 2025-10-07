@@ -3213,8 +3213,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Generate external_id (Shopify product ID) and SKU if not provided
-				externalID := fmt.Sprintf("product_%d", time.Now().Unix())
+				// Generate external_id and SKU if not provided
+				externalID := fmt.Sprintf("manual_product_%d", time.Now().Unix())
 				sku := fmt.Sprintf("SKU-%d", time.Now().Unix())
 				if providedSku, ok := productData["sku"].(string); ok && providedSku != "" {
 					sku = providedSku
@@ -3223,7 +3223,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					externalID = providedExternalId
 				}
 
-				// Get connector_id (optional - for linking to Shopify store)
+				// connector_id is optional - only set if explicitly provided
+				// For manual products, this will be NULL by default (not linked to any Shopify store)
 				var connectorID sql.NullString
 				if providedConnectorId, ok := productData["connector_id"].(string); ok && providedConnectorId != "" {
 					connectorID = sql.NullString{String: providedConnectorId, Valid: true}
@@ -3368,7 +3369,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					"message":      "Product created successfully",
 					"id":           generatedID,
 					"external_id":  externalID,
+					"connector_id": connectorID.String, // Will be empty if not provided
 					"seo_enhanced": true,
+					"is_manual":    true, // Flag to indicate this was manually created
 				})
 			})
 
