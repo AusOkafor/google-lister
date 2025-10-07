@@ -3107,41 +3107,6 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				})
 			})
 
-			// Update product
-			products.PUT("/:id", func(c *gin.Context) {
-				productID := c.Param("id")
-
-				var request struct {
-					Title       string  `json:"title"`
-					Description string  `json:"description"`
-					Price       float64 `json:"price"`
-					SKU         string  `json:"sku"`
-					Brand       string  `json:"brand"`
-					Category    string  `json:"category"`
-					Status      string  `json:"status"`
-				}
-
-				if err := c.ShouldBindJSON(&request); err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-					return
-				}
-
-				_, err := db.Exec(`
-					UPDATE products 
-					SET title = $1, description = $2, price = $3, sku = $4, brand = $5, category = $6, status = $7, updated_at = NOW()
-					WHERE id = $8
-				`, request.Title, request.Description, request.Price, request.SKU, request.Brand, request.Category, request.Status, productID)
-
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update product"})
-					return
-				}
-
-				c.JSON(http.StatusOK, gin.H{
-					"message": "Product updated successfully",
-				})
-			})
-
 			// Get inventory levels for a product
 			products.GET("/:id/inventory", func(c *gin.Context) {
 				productID := c.Param("id")
