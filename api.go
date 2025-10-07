@@ -3280,31 +3280,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					gtin = g
 				}
 
-				mpn := ""
-				if m, ok := productData["mpn"].(string); ok {
-					mpn = m
-				}
-
 				currency := "USD"
 				if curr, ok := productData["currency"].(string); ok {
 					currency = curr
 				}
 
-				availability := "IN_STOCK"
-				if avail, ok := productData["availability"].(string); ok {
-					availability = avail
-				}
-
-				taxClass := ""
-				if tax, ok := productData["tax_class"].(string); ok {
-					taxClass = tax
-				}
+				// Note: mpn, availability, and tax_class are accepted from frontend but not stored in database
+				// since these columns don't exist in the current schema
 
 				// Insert product
 				_, err = db.Exec(`
-				INSERT INTO products (id, external_id, title, description, price, currency, sku, gtin, mpn, brand, category, images, variants, metadata, shipping, custom_labels, availability, tax_class, status, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
-			`, id, id, title, description, price, currency, sku, gtin, mpn, brand, category, imagesJSON, variantsJSON, metadataJSON, shippingJSON, customLabelsJSON, availability, taxClass, "ACTIVE")
+				INSERT INTO products (id, external_id, title, description, price, currency, sku, gtin, brand, category, images, variants, metadata, shipping, custom_labels, status, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
+			`, id, id, title, description, price, currency, sku, gtin, brand, category, imagesJSON, variantsJSON, metadataJSON, shippingJSON, customLabelsJSON, "ACTIVE")
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product: " + err.Error()})
@@ -3618,10 +3606,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					}
 
 					products = append(products, map[string]interface{}{
-						"id":           externalID,
-						"name":         title,
-						"description":  description,
-						"price":        fmt.Sprintf("%s %s", func() string { if price.Valid { return fmt.Sprintf("%.2f", price.Float64) }; return "0.00" }(), currency),
+						"id":          externalID,
+						"name":        title,
+						"description": description,
+						"price": fmt.Sprintf("%s %s", func() string {
+							if price.Valid {
+								return fmt.Sprintf("%.2f", price.Float64)
+							}
+							return "0.00"
+						}(), currency),
 						"sku":          sku,
 						"brand":        brand,
 						"category":     category,
@@ -3701,10 +3694,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					}
 
 					products = append(products, map[string]interface{}{
-						"id":           externalID,
-						"name":         title,
-						"description":  description,
-						"price":        fmt.Sprintf("%s %s", func() string { if price.Valid { return fmt.Sprintf("%.2f", price.Float64) }; return "0.00" }(), currency),
+						"id":          externalID,
+						"name":        title,
+						"description": description,
+						"price": fmt.Sprintf("%s %s", func() string {
+							if price.Valid {
+								return fmt.Sprintf("%.2f", price.Float64)
+							}
+							return "0.00"
+						}(), currency),
 						"sku":          sku,
 						"brand":        brand,
 						"category":     category,
