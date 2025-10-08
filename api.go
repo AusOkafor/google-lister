@@ -55,14 +55,15 @@ type ShopifyImage struct {
 }
 
 type ShopifyVariant struct {
-	ID                  int64  `json:"id"`
-	Title               string `json:"title"`
-	Price               string `json:"price"`
-	SKU                 string `json:"sku"`
-	InventoryQuantity   int    `json:"inventory_quantity"`
-	InventoryManagement string `json:"inventory_management"`
-	InventoryPolicy     string `json:"inventory_policy"`
-	Available           *bool  `json:"available"`
+	ID                  int64   `json:"id"`
+	Title               string  `json:"title"`
+	Price               string  `json:"price"`
+	CompareAtPrice      *string `json:"compare_at_price"`
+	SKU                 string  `json:"sku"`
+	InventoryQuantity   int     `json:"inventory_quantity"`
+	InventoryManagement string  `json:"inventory_management"`
+	InventoryPolicy     string  `json:"inventory_policy"`
+	Available           *bool   `json:"available"`
 }
 
 type ShopifyMetafield struct {
@@ -1720,6 +1721,48 @@ func validateShopifyWebhook(body []byte, signature, secret string) bool {
 	return hmac.Equal(expectedSignature, computedSignature)
 }
 
+// mergeVariantInventory merges new variant data with existing inventory data
+// This preserves inventory_quantity when Shopify webhooks don't include it
+func mergeVariantInventory(newVariants []ShopifyVariant, existingVariants []ShopifyVariant) []ShopifyVariant {
+	// Create a map of existing variants by ID for quick lookup
+	existingMap := make(map[int64]ShopifyVariant)
+	for _, variant := range existingVariants {
+		existingMap[variant.ID] = variant
+	}
+
+	// Merge the variants
+	mergedVariants := make([]ShopifyVariant, len(newVariants))
+	for i, newVariant := range newVariants {
+		mergedVariants[i] = newVariant
+
+		// If existing variant exists and new variant is missing inventory data, preserve it
+		if existingVariant, exists := existingMap[newVariant.ID]; exists {
+			// Preserve inventory_management if not provided in webhook
+			if newVariant.InventoryManagement == "" && existingVariant.InventoryManagement != "" {
+				mergedVariants[i].InventoryManagement = existingVariant.InventoryManagement
+			}
+
+			// Preserve inventory_policy if not provided in webhook
+			if newVariant.InventoryPolicy == "" && existingVariant.InventoryPolicy != "" {
+				mergedVariants[i].InventoryPolicy = existingVariant.InventoryPolicy
+			}
+
+			// For inventory_quantity: only preserve if new data doesn't have inventory tracking enabled
+			// If inventory_management is set in new data, use the new quantity (even if 0)
+			// If inventory_management is not set, preserve the old quantity
+			if mergedVariants[i].InventoryManagement == "" || mergedVariants[i].InventoryManagement == "not_managed" {
+				// Not tracking inventory, preserve old value if it exists
+				if existingVariant.InventoryQuantity > 0 {
+					mergedVariants[i].InventoryQuantity = existingVariant.InventoryQuantity
+				}
+			}
+			// Otherwise use the new quantity from the webhook (Shopify sent updated inventory)
+		}
+	}
+
+	return mergedVariants
+}
+
 // processProductUpdate handles product update webhooks
 func processProductUpdate(product ShopifyProduct, shopDomain, topic string) map[string]interface{} {
 	result := map[string]interface{}{
@@ -1729,20 +1772,31 @@ func processProductUpdate(product ShopifyProduct, shopDomain, topic string) map[
 		"details":   map[string]interface{}{},
 	}
 
-	// Find existing product by external_id
+	// Find existing product and its variants by external_id
 	var existingProductID string
+	var existingVariantsJSON string
 	err := db.QueryRow(`
-		SELECT id FROM products 
+		SELECT id, variants FROM products 
 		WHERE external_id = $1 AND connector_id IN (
 			SELECT id FROM connectors WHERE shop_domain = $2
 		)
-	`, fmt.Sprintf("%d", product.ID), shopDomain).Scan(&existingProductID)
+	`, fmt.Sprintf("%d", product.ID), shopDomain).Scan(&existingProductID, &existingVariantsJSON)
 
 	if err != nil {
 		result["status"] = "error"
 		result["message"] = "Product not found in database"
 		return result
 	}
+
+	// Parse existing variants to preserve inventory data
+	var existingVariants []ShopifyVariant
+	if existingVariantsJSON != "" {
+		json.Unmarshal([]byte(existingVariantsJSON), &existingVariants)
+	}
+
+	// Merge variant data - preserve inventory_quantity from existing data if new data doesn't have it
+	mergedVariants := mergeVariantInventory(product.Variants, existingVariants)
+	product.Variants = mergedVariants
 
 	// Transform Shopify product to our format
 	transformedProduct := transformShopifyProduct(product, shopDomain, make(map[int64]int))
@@ -2621,6 +2675,27 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				if err := json.Unmarshal(body, &shopifyProduct); err != nil {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse product data"})
 					return
+				}
+
+				// Debug: Log variant inventory data from webhook
+				fmt.Printf("\n🔍 WEBHOOK DEBUG - Product Update Received:\n")
+				fmt.Printf("Product ID: %d\n", shopifyProduct.ID)
+				fmt.Printf("Product Title: %s\n", shopifyProduct.Title)
+				fmt.Printf("Number of Variants: %d\n", len(shopifyProduct.Variants))
+				for i, variant := range shopifyProduct.Variants {
+					fmt.Printf("  Variant %d:\n", i+1)
+					fmt.Printf("    - ID: %d\n", variant.ID)
+					fmt.Printf("    - Title: %s\n", variant.Title)
+					fmt.Printf("    - Price: %s\n", variant.Price)
+					fmt.Printf("    - SKU: %s\n", variant.SKU)
+					fmt.Printf("    - Inventory Quantity: %d\n", variant.InventoryQuantity)
+					fmt.Printf("    - Inventory Management: %s\n", variant.InventoryManagement)
+					fmt.Printf("    - Inventory Policy: %s\n", variant.InventoryPolicy)
+					if variant.Available != nil {
+						fmt.Printf("    - Available: %v\n", *variant.Available)
+					} else {
+						fmt.Printf("    - Available: nil\n")
+					}
 				}
 
 				// Process product update
