@@ -3660,7 +3660,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 					// Upload to Supabase Storage
 					supabaseURL := os.Getenv("SUPABASE_URL")
-					supabaseKey := os.Getenv("SUPABASE_ANON_KEY")
+					supabaseKey := os.Getenv("SUPABASE_KEY")
 
 					fmt.Printf("🔍 Supabase Config - URL: %s, Key: %s\n", supabaseURL, supabaseKey)
 
