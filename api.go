@@ -3362,26 +3362,52 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					fmt.Printf("🔍 SEO Enhancement Debug - Existing metadata: %+v\n", existingMetadata)
 
 					// Add SEO enhancements matching synced product format exactly
-					if existingMetadata["seo_title"] == "" {
-						existingMetadata["seo_title"] = title
+					// Always override with fresh SEO data for manually created products
+					existingMetadata["seo_title"] = title
+					existingMetadata["seo_description"] = description
+					if brand != "" {
+						existingMetadata["alt_text"] = fmt.Sprintf("%s - product from %s", title, brand)
+					} else {
+						existingMetadata["alt_text"] = title
 					}
-					if existingMetadata["seo_description"] == "" {
-						existingMetadata["seo_description"] = description
+
+					// Build keywords array
+					keywords := []string{title}
+					if category != "" && category != "EMPTY" {
+						keywords = append(keywords, category)
 					}
-					if existingMetadata["alt_text"] == "" {
-						existingMetadata["alt_text"] = fmt.Sprintf("%s - %s product from %s", title, category, brand)
+					if brand != "" {
+						keywords = append(keywords, brand)
 					}
-					if existingMetadata["keywords"] == nil {
-						existingMetadata["keywords"] = []string{title, "", brand, "online shopping", "buy online"}
-					} else if keywordsSlice, ok := existingMetadata["keywords"].([]string); !ok || len(keywordsSlice) == 0 {
-						existingMetadata["keywords"] = []string{title, "", brand, "online shopping", "buy online"}
+					keywords = append(keywords, "online shopping", "buy online")
+					existingMetadata["keywords"] = keywords
+
+					// Build meta keywords string
+					metaKeywords := title
+					if category != "" && category != "EMPTY" {
+						metaKeywords += ", " + category
 					}
-					if existingMetadata["meta_keywords"] == "" {
-						existingMetadata["meta_keywords"] = fmt.Sprintf("%s, , %s, online shopping, buy online", title, brand)
+					if brand != "" {
+						metaKeywords += ", " + brand
 					}
-					if existingMetadata["schema_markup"] == "" {
-						existingMetadata["schema_markup"] = fmt.Sprintf(`{"@context":"https://schema.org","@type":"Product","name":"%s","description":"%s","brand":{"@type":"Brand","name":"%s"},"category":"%s"}`, title, description, brand, category)
+					metaKeywords += ", online shopping, buy online"
+					existingMetadata["meta_keywords"] = metaKeywords
+
+					// Create schema markup
+					schemaCategory := category
+					if schemaCategory == "EMPTY" {
+						schemaCategory = ""
 					}
+					schemaDescription := description
+					if schemaDescription == "" {
+						schemaDescription = title
+					}
+					schemaBrand := brand
+					if schemaBrand == "" {
+						schemaBrand = "Generic"
+					}
+					existingMetadata["schema_markup"] = fmt.Sprintf(`{"@context":"https://schema.org","@type":"Product","name":"%s","description":"%s","brand":{"@type":"Brand","name":"%s"},"category":"%s"}`,
+						title, schemaDescription, schemaBrand, schemaCategory)
 					existingMetadata["seo_enhanced"] = true
 					existingMetadata["seo_enhanced_at"] = time.Now().Format(time.RFC3339)
 
