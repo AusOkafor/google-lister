@@ -22,6 +22,7 @@ model Product {
   mpn         String?
   category    String?
   price       Decimal  @db.Decimal(10, 2)
+  compareAtPrice Decimal? @map("compare_at_price") @db.Decimal(10, 2)
   currency    String   @default("USD")
   availability ProductAvailability @default(IN_STOCK)
   images      Json     // Array of image URLs

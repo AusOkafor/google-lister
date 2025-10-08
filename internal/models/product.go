@@ -18,6 +18,7 @@ type Product struct {
 	MPN          *string             `json:"mpn"`
 	Category     *string             `json:"category"`
 	Price        float64             `json:"price" gorm:"type:decimal(10,2)"`
+	CompareAtPrice *float64          `json:"compare_at_price" gorm:"type:decimal(10,2)"`
 	Currency     string              `json:"currency" gorm:"default:USD"`
 	Availability string              `json:"availability" gorm:"default:IN_STOCK"`
 	Images       []string            `json:"images" gorm:"type:jsonb"`
