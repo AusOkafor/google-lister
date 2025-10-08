@@ -275,6 +275,7 @@ func initDB() error {
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 			UNIQUE(connector_id, external_id)
 		);`,
+		`ALTER TABLE products ADD COLUMN IF NOT EXISTS compare_at_price DECIMAL(10,2);`,
 		`CREATE TABLE IF NOT EXISTS feed_variants (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			product_id UUID REFERENCES products(id),
@@ -2981,7 +2982,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Get products
 				query := fmt.Sprintf(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+					SELECT id, external_id, title, description, price, compare_at_price, currency, sku, brand, category, 
 						   images, variants, metadata, status, created_at, updated_at
 					FROM products %s 
 					ORDER BY created_at DESC 
@@ -3001,12 +3002,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				for rows.Next() {
 					var id, externalID, title, description, brand, category, status string
 					var sku sql.NullString
-					var price sql.NullFloat64 // Use sql.NullFloat64 for price
+					var price sql.NullFloat64          // Use sql.NullFloat64 for price
+					var compareAtPrice sql.NullFloat64 // Use sql.NullFloat64 for compare_at_price
 					var currency string
 					var images, variants, metadata sql.NullString // Use sql.NullString to handle NULL values
 					var createdAt, updatedAt time.Time
 
-					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &compareAtPrice, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status, &createdAt, &updatedAt)
 					if err != nil {
 						c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to scan product: %v", err)})
@@ -3024,21 +3026,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					}
 
 					products = append(products, map[string]interface{}{
-						"id":          id,
-						"external_id": externalID,
-						"title":       title,
-						"description": description,
-						"price":       getFloatValue(price),
-						"currency":    currency,
-						"sku":         getStringValue(sku),
-						"brand":       brand,
-						"category":    category,
-						"images":      imageList,
-						"variants":    getStringValue(variants),
-						"metadata":    getStringValue(metadata),
-						"status":      status,
-						"created_at":  createdAt,
-						"updated_at":  updatedAt,
+						"id":               id,
+						"external_id":      externalID,
+						"title":            title,
+						"description":      description,
+						"price":            getFloatValue(price),
+						"compare_at_price": getFloatValue(compareAtPrice),
+						"currency":         currency,
+						"sku":              getStringValue(sku),
+						"brand":            brand,
+						"category":         category,
+						"images":           imageList,
+						"variants":         getStringValue(variants),
+						"metadata":         getStringValue(metadata),
+						"status":           status,
+						"created_at":       createdAt,
+						"updated_at":       updatedAt,
 					})
 				}
 
@@ -3070,13 +3073,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var id, externalID, title, description, brand, category, status string
 				var sku sql.NullString
-				var price sql.NullFloat64 // Use sql.NullFloat64 for price
+				var price sql.NullFloat64          // Use sql.NullFloat64 for price
+				var compareAtPrice sql.NullFloat64 // Use sql.NullFloat64 for compare_at_price
 				var currency string
 				var images, variants, metadata sql.NullString // Use sql.NullString to handle NULL values
 				var createdAt, updatedAt time.Time
 
 				err := db.QueryRow(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+					SELECT id, external_id, title, description, price, compare_at_price, currency, sku, brand, category, 
 						   images, variants, metadata, status, created_at, updated_at
 					FROM products 
 					WHERE id = $1
@@ -3100,21 +3104,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				c.JSON(http.StatusOK, gin.H{
 					"data": map[string]interface{}{
-						"id":          id,
-						"external_id": externalID,
-						"title":       title,
-						"description": description,
-						"price":       getFloatValue(price),
-						"currency":    currency,
-						"sku":         getStringValue(sku),
-						"brand":       brand,
-						"category":    category,
-						"images":      imageList,
-						"variants":    getStringValue(variants),
-						"metadata":    getStringValue(metadata),
-						"status":      status,
-						"created_at":  createdAt,
-						"updated_at":  updatedAt,
+						"id":               id,
+						"external_id":      externalID,
+						"title":            title,
+						"description":      description,
+						"price":            getFloatValue(price),
+						"compare_at_price": getFloatValue(compareAtPrice),
+						"currency":         currency,
+						"sku":              getStringValue(sku),
+						"brand":            brand,
+						"category":         category,
+						"images":           imageList,
+						"variants":         getStringValue(variants),
+						"metadata":         getStringValue(metadata),
+						"status":           status,
+						"created_at":       createdAt,
+						"updated_at":       updatedAt,
 					},
 					"message": "Product retrieved successfully",
 				})
@@ -3239,7 +3244,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// connector_id is optional - only set if explicitly provided
 				// For manual products, this will be NULL by default (not linked to any Shopify store)
 				var connectorID sql.NullString
-				if providedConnectorId, ok := productData["connector_id"].(string); ok && providedConnectorId != "" {
+				if providedConnectorId, ok := productData["connector_id"].(string); ok && providedConnectorId != "" && providedConnectorId != "none" {
 					connectorID = sql.NullString{String: providedConnectorId, Valid: true}
 				}
 
@@ -3422,11 +3427,23 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Insert product (let database generate UUID for id)
 				var generatedID string
+				// Extract compare_at_price from metadata if available
+				var compareAtPrice sql.NullFloat64
+				if metadata, ok := productData["metadata"]; ok {
+					if metadataMap, ok := metadata.(map[string]interface{}); ok {
+						if comparePrice, ok := metadataMap["compare_at_price"]; ok {
+							if comparePriceFloat, ok := comparePrice.(float64); ok {
+								compareAtPrice = sql.NullFloat64{Float64: comparePriceFloat, Valid: true}
+							}
+						}
+					}
+				}
+
 				err = db.QueryRow(`
-				INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, gtin, brand, category, images, variants, metadata, shipping, custom_labels, status, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
+				INSERT INTO products (connector_id, external_id, title, description, price, compare_at_price, currency, sku, gtin, brand, category, images, variants, metadata, shipping, custom_labels, status, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
 				RETURNING id
-			`, connectorID, externalID, title, description, price, currency, sku, gtin, brand, category, pq.Array(imagesArray), variantsJSON, enhancedMetadata, shippingJSON, pq.Array(customLabelsArray), "ACTIVE").Scan(&generatedID)
+			`, connectorID, externalID, title, description, price, compareAtPrice, currency, sku, gtin, brand, category, pq.Array(imagesArray), variantsJSON, enhancedMetadata, shippingJSON, pq.Array(customLabelsArray), "ACTIVE").Scan(&generatedID)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product: " + err.Error()})
@@ -3763,7 +3780,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Get products for Google Shopping feed
 				rows, err := db.Query(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+					SELECT id, external_id, title, description, price, compare_at_price, currency, sku, brand, category, 
 						   images, variants, metadata, status
 					FROM products 
 					WHERE status = 'ACTIVE' AND price > 0
@@ -3781,11 +3798,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var id, externalID, title, description, brand, category, status string
 					var sku sql.NullString
 					var price sql.NullFloat64
+					var compareAtPrice sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
 
-					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &compareAtPrice, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status)
 					if err != nil {
 						continue // Skip problematic products
@@ -3854,7 +3872,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Get products for Facebook Catalog feed
 				rows, err := db.Query(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+					SELECT id, external_id, title, description, price, compare_at_price, currency, sku, brand, category, 
 						   images, variants, metadata, status
 					FROM products 
 					WHERE status = 'ACTIVE' AND price > 0
@@ -3872,11 +3890,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var id, externalID, title, description, brand, category, status string
 					var sku sql.NullString
 					var price sql.NullFloat64
+					var compareAtPrice sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
 
-					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &compareAtPrice, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status)
 					if err != nil {
 						continue // Skip problematic products
@@ -3942,7 +3961,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Get products for Instagram Shopping feed
 				rows, err := db.Query(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+					SELECT id, external_id, title, description, price, compare_at_price, currency, sku, brand, category, 
 						   images, variants, metadata, status
 					FROM products 
 					WHERE status = 'ACTIVE' AND price > 0
@@ -3960,11 +3979,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var id, externalID, title, description, brand, category, status string
 					var sku sql.NullString
 					var price sql.NullFloat64
+					var compareAtPrice sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
 
-					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &compareAtPrice, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status)
 					if err != nil {
 						continue // Skip problematic products
@@ -4093,7 +4113,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Get products
 				query := fmt.Sprintf(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+					SELECT id, external_id, title, description, price, compare_at_price, currency, sku, brand, category, 
 						   images, variants, metadata, status, created_at, updated_at
 					FROM products %s 
 					ORDER BY created_at DESC 
@@ -4114,12 +4134,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var id, externalID, title, description, brand, category, status string
 					var sku sql.NullString
 					var price sql.NullFloat64
+					var compareAtPrice sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
 					var createdAt, updatedAt time.Time
 
-					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &compareAtPrice, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status, &createdAt, &updatedAt)
 					if err != nil {
 						continue
@@ -4203,7 +4224,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Get products
 				query := fmt.Sprintf(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+					SELECT id, external_id, title, description, price, compare_at_price, currency, sku, brand, category, 
 						   images, variants, metadata, status, created_at, updated_at
 					FROM products %s 
 					ORDER BY created_at DESC 
@@ -4224,12 +4245,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var id, externalID, title, description, brand, category, status string
 					var sku sql.NullString
 					var price sql.NullFloat64
+					var compareAtPrice sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
 					var createdAt, updatedAt time.Time
 
-					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &compareAtPrice, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status, &createdAt, &updatedAt)
 					if err != nil {
 						continue
@@ -4245,21 +4267,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					}
 
 					products = append(products, map[string]interface{}{
-						"id":          id,
-						"external_id": externalID,
-						"title":       title,
-						"description": description,
-						"price":       getFloatValue(price),
-						"currency":    currency,
-						"sku":         getStringValue(sku),
-						"brand":       brand,
-						"category":    category,
-						"images":      imageList,
-						"variants":    getStringValue(variants),
-						"metadata":    getStringValue(metadata),
-						"status":      status,
-						"created_at":  createdAt,
-						"updated_at":  updatedAt,
+						"id":               id,
+						"external_id":      externalID,
+						"title":            title,
+						"description":      description,
+						"price":            getFloatValue(price),
+						"compare_at_price": getFloatValue(compareAtPrice),
+						"currency":         currency,
+						"sku":              getStringValue(sku),
+						"brand":            brand,
+						"category":         category,
+						"images":           imageList,
+						"variants":         getStringValue(variants),
+						"metadata":         getStringValue(metadata),
+						"status":           status,
+						"created_at":       createdAt,
+						"updated_at":       updatedAt,
 					})
 				}
 
@@ -4289,7 +4312,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Get products
 				rows, err := db.Query(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+					SELECT id, external_id, title, description, price, compare_at_price, currency, sku, brand, category, 
 						   images, variants, metadata, status, created_at, updated_at
 					FROM products 
 					WHERE status = 'ACTIVE'
@@ -4307,12 +4330,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var id, externalID, title, description, brand, category, status string
 					var sku sql.NullString
 					var price sql.NullFloat64
+					var compareAtPrice sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
 					var createdAt, updatedAt time.Time
 
-					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &compareAtPrice, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status, &createdAt, &updatedAt)
 					if err != nil {
 						continue
@@ -4328,21 +4352,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					}
 
 					products = append(products, map[string]interface{}{
-						"id":          id,
-						"external_id": externalID,
-						"title":       title,
-						"description": description,
-						"price":       getFloatValue(price),
-						"currency":    currency,
-						"sku":         getStringValue(sku),
-						"brand":       brand,
-						"category":    category,
-						"images":      imageList,
-						"variants":    getStringValue(variants),
-						"metadata":    getStringValue(metadata),
-						"status":      status,
-						"created_at":  createdAt,
-						"updated_at":  updatedAt,
+						"id":               id,
+						"external_id":      externalID,
+						"title":            title,
+						"description":      description,
+						"price":            getFloatValue(price),
+						"compare_at_price": getFloatValue(compareAtPrice),
+						"currency":         currency,
+						"sku":              getStringValue(sku),
+						"brand":            brand,
+						"category":         category,
+						"images":           imageList,
+						"variants":         getStringValue(variants),
+						"metadata":         getStringValue(metadata),
+						"status":           status,
+						"created_at":       createdAt,
+						"updated_at":       updatedAt,
 					})
 				}
 
@@ -4383,7 +4408,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				rows, err := db.Query(fmt.Sprintf(`
-					SELECT id, external_id, title, description, price, currency, sku, brand, category, 
+					SELECT id, external_id, title, description, price, compare_at_price, currency, sku, brand, category, 
 						   images, variants, metadata, status
 					FROM products %s
 					ORDER BY created_at DESC
@@ -4399,11 +4424,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					var id, externalID, title, description, brand, category, status string
 					var sku sql.NullString
 					var price sql.NullFloat64
+					var compareAtPrice sql.NullFloat64
 					var currency string
 					var images string
 					var variants, metadata sql.NullString
 
-					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category,
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &compareAtPrice, &currency, &sku, &brand, &category,
 						&images, &variants, &metadata, &status)
 					if err != nil {
 						continue
@@ -4419,19 +4445,20 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					}
 
 					products = append(products, map[string]interface{}{
-						"id":          id,
-						"external_id": externalID,
-						"title":       title,
-						"description": description,
-						"price":       getFloatValue(price),
-						"currency":    currency,
-						"sku":         getStringValue(sku),
-						"brand":       brand,
-						"category":    category,
-						"images":      imageList,
-						"variants":    getStringValue(variants),
-						"metadata":    getStringValue(metadata),
-						"status":      status,
+						"id":               id,
+						"external_id":      externalID,
+						"title":            title,
+						"description":      description,
+						"price":            getFloatValue(price),
+						"compare_at_price": getFloatValue(compareAtPrice),
+						"currency":         currency,
+						"sku":              getStringValue(sku),
+						"brand":            brand,
+						"category":         category,
+						"images":           imageList,
+						"variants":         getStringValue(variants),
+						"metadata":         getStringValue(metadata),
+						"status":           status,
 					})
 				}
 
