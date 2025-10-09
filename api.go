@@ -5469,14 +5469,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Generate optimized title using AI (mock for now)
 			originalTitle := title.String
 			optimizedTitle := fmt.Sprintf("%s | Premium Quality | Fast Shipping", originalTitle)
-			
+
 			// Calculate mock scores
 			score := 85
 			improvement := 15.5
 
 			// Save optimization history
 			historyID := fmt.Sprintf("%d", time.Now().UnixNano())
-			
+
 			c.JSON(http.StatusOK, gin.H{
 				"optimization_id":   historyID,
 				"product_id":        productID,
