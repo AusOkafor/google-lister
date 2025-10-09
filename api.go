@@ -223,8 +223,8 @@ func callOpenRouterForSEOWithOptions(product ShopifyProduct, optimizationType, a
 	// Build language-specific instructions
 	languageInstructions := map[string]string{
 		"en": "in English",
-		"es": "in Spanish (Español)",
-		"fr": "in French (Français)",
+		"es": "in Spanish (Espa�ol)",
+		"fr": "in French (Fran�ais)",
 		"de": "in German (Deutsch)",
 	}
 	langInstruction := languageInstructions[language]
@@ -906,7 +906,7 @@ func callOpenRouterAI(prompt string, maxTokens int, temperature float64) (string
 	}
 
 	// Log the API call for debugging
-	fmt.Printf("ðŸ¤– AI API Call: %s\n", prompt[:min(50, len(prompt))])
+	fmt.Printf("🤖 AI API Call: %s\n", prompt[:min(50, len(prompt))])
 
 	request := OpenRouterRequest{
 		Model:       OPENROUTER_MODEL,
@@ -977,14 +977,14 @@ func optimizeProductTitle(title, description, brand, category, keywords string, 
 	// Try AI optimization first
 	aiTitle, err := optimizeTitleWithAI(title, description, brand, category, keywords, maxLength)
 	if err == nil && aiTitle != "" {
-		fmt.Printf("âœ… AI Title Optimization: %s\n", aiTitle)
+		fmt.Printf("✅ AI Title Optimization: %s\n", aiTitle)
 		return aiTitle
 	}
 
 	// Fallback to rule-based optimization
-	fmt.Printf("âš ï¸ AI Failed, using fallback: %s\n", err)
+	fmt.Printf("⚠️ AI Failed, using fallback: %s\n", err)
 	ruleTitle := optimizeTitleWithRules(title, description, brand, category, keywords, maxLength)
-	fmt.Printf("ðŸ“ Rule-based Title: %s\n", ruleTitle)
+	fmt.Printf("📝 Rule-based Title: %s\n", ruleTitle)
 	return ruleTitle
 }
 
@@ -1018,23 +1018,23 @@ Better: "Men's Cotton Oxford Blue Dress Shirt - Business Casual"
 
 Based on the description "%s", create a title that describes what the product actually is and why customers should buy it. Return ONLY the optimized title:`, title, description, brand, category, keywords, maxLength, description)
 
-	fmt.Printf("ðŸ¤– AI Input - Title: '%s', Description: '%s', Brand: '%s'\n", title, description, brand)
+	fmt.Printf("🤖 AI Input - Title: '%s', Description: '%s', Brand: '%s'\n", title, description, brand)
 
 	aiTitle, err := callOpenRouterAI(prompt, 50, 0.7)
 	if err != nil {
-		fmt.Printf("âŒ AI Error: %v\n", err)
+		fmt.Printf("❌ AI Error: %v\n", err)
 		return "", err
 	}
 
 	// Clean and validate AI response
 	aiTitle = strings.TrimSpace(aiTitle)
-	fmt.Printf("ðŸ¤– AI Raw Response: '%s'\n", aiTitle)
+	fmt.Printf("🤖 AI Raw Response: '%s'\n", aiTitle)
 
 	if len(aiTitle) > maxLength {
 		aiTitle = aiTitle[:maxLength-3] + "..."
 	}
 
-	fmt.Printf("âœ… AI Final Title: '%s'\n", aiTitle)
+	fmt.Printf("✅ AI Final Title: '%s'\n", aiTitle)
 	return aiTitle, nil
 }
 
@@ -1157,16 +1157,16 @@ func enhanceDescriptionWithRules(title, description, brand, category string, pri
 	// Add compelling opening based on style
 	switch style {
 	case "marketing":
-		enhanced.WriteString("ðŸŒŸ ")
+		enhanced.WriteString("🌟 ")
 		if brand != "" {
 			enhanced.WriteString(fmt.Sprintf("Discover the premium %s ", brand))
 		}
 		enhanced.WriteString(fmt.Sprintf("%s - ", title))
 	case "technical":
-		enhanced.WriteString("ðŸ”§ ")
+		enhanced.WriteString("🔧 ")
 		enhanced.WriteString(fmt.Sprintf("Technical specifications for %s: ", title))
 	case "casual":
-		enhanced.WriteString("âœ¨ ")
+		enhanced.WriteString("✨ ")
 		enhanced.WriteString(fmt.Sprintf("Love this %s! ", title))
 	}
 
@@ -1189,11 +1189,11 @@ func enhanceDescriptionWithRules(title, description, brand, category string, pri
 	// Add call to action based on style
 	switch style {
 	case "marketing":
-		enhanced.WriteString(" ðŸ›’ Shop now and experience the difference!")
+		enhanced.WriteString(" 🛒 Shop now and experience the difference!")
 	case "technical":
-		enhanced.WriteString(" ðŸ“Š Ideal for professionals and enthusiasts.")
+		enhanced.WriteString(" 📊 Ideal for professionals and enthusiasts.")
 	case "casual":
-		enhanced.WriteString(" ðŸ˜ You'll love it!")
+		enhanced.WriteString(" 😍 You'll love it!")
 	}
 
 	return enhanced.String()
@@ -1511,7 +1511,7 @@ func calculateDescriptionImprovement(original, enhanced string) map[string]inter
 
 	// Check for engagement improvements
 	engagementScore := 0
-	if strings.Contains(enhanced, "ðŸŒŸ") || strings.Contains(enhanced, "âœ¨") {
+	if strings.Contains(enhanced, "🌟") || strings.Contains(enhanced, "✨") {
 		engagementScore += 20
 	}
 	if strings.Contains(enhanced, "!") {
@@ -1554,7 +1554,7 @@ func calculateReadabilityScore(description string) int {
 	if strings.Contains(description, "!") {
 		score += 15
 	}
-	if strings.Contains(description, "ðŸŒŸ") || strings.Contains(description, "âœ¨") {
+	if strings.Contains(description, "🌟") || strings.Contains(description, "✨") {
 		score += 10
 	}
 
@@ -1962,10 +1962,12 @@ func processProductUpdate(product ShopifyProduct, shopDomain, topic string) map[
 	// Transform Shopify product to our format
 	transformedProduct := transformShopifyProduct(product, shopDomain, make(map[int64]int))
 
-	// ðŸš€ AI-POWERED SEO ENHANCEMENT
-	seoEnhancement := enhanceProductSEO(product)
+	// Get automatic SEO enhancement (fallback-based, not full AI)
+	// This gives products basic SEO but doesn't count as "AI optimized"
+	seoEnhancement := createFallbackSEO(product)
 
-	// Create enhanced metadata with SEO data
+	// Create metadata with basic SEO (NOT marked as AI enhanced)
+	// Only manual optimization via API endpoint sets seo_enhanced = true
 	enhancedMetadata := map[string]interface{}{
 		"seo_title":       seoEnhancement.SEOTitle,
 		"seo_description": seoEnhancement.SEODescription,
@@ -1973,8 +1975,8 @@ func processProductUpdate(product ShopifyProduct, shopDomain, topic string) map[
 		"meta_keywords":   seoEnhancement.MetaKeywords,
 		"alt_text":        seoEnhancement.AltText,
 		"schema_markup":   seoEnhancement.SchemaMarkup,
-		"seo_enhanced":    true,
-		"seo_enhanced_at": time.Now().Format(time.RFC3339),
+		"seo_enhanced":    false, // NOT marked as AI enhanced (automatic sync)
+		"seo_enhanced_at": "",
 	}
 
 	// Convert enhanced metadata to JSON
@@ -2029,10 +2031,12 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 	// Transform Shopify product to our format
 	transformedProduct := transformShopifyProduct(product, shopDomain, make(map[int64]int))
 
-	// ðŸš€ AI-POWERED SEO ENHANCEMENT
-	seoEnhancement := enhanceProductSEO(product)
+	// Get automatic SEO enhancement (fallback-based, not full AI)
+	// This gives products basic SEO but doesn't count as "AI optimized"
+	seoEnhancement := createFallbackSEO(product)
 
-	// Create enhanced metadata with SEO data
+	// Create metadata with basic SEO (NOT marked as AI enhanced)
+	// Only manual optimization via API endpoint sets seo_enhanced = true
 	enhancedMetadata := map[string]interface{}{
 		"seo_title":       seoEnhancement.SEOTitle,
 		"seo_description": seoEnhancement.SEODescription,
@@ -2040,8 +2044,8 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 		"meta_keywords":   seoEnhancement.MetaKeywords,
 		"alt_text":        seoEnhancement.AltText,
 		"schema_markup":   seoEnhancement.SchemaMarkup,
-		"seo_enhanced":    true,
-		"seo_enhanced_at": time.Now().Format(time.RFC3339),
+		"seo_enhanced":    false, // NOT marked as AI enhanced (automatic sync)
+		"seo_enhanced_at": "",
 	}
 
 	// Convert enhanced metadata to JSON
@@ -2775,7 +2779,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					<html>
 					<head><title>Database Error</title></head>
 					<body>
-						<h2>âŒ Installation Failed</h2>
+						<h2>❌ Installation Failed</h2>
 						<p>Failed to save connector to database.</p>
 					</body>
 					</html>
@@ -2790,7 +2794,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				<html>
 				<head><title>Installation Successful</title></head>
 				<body>
-					<h2>âœ… Lister App Installed Successfully!</h2>
+					<h2>✅ Lister App Installed Successfully!</h2>
 					<p><strong>Shop:</strong> %s</p>
 					<p><strong>Status:</strong> Connected</p>
 					<p><strong>Connector ID:</strong> %s</p>
@@ -2839,7 +2843,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Debug: Log variant inventory data from webhook
-				fmt.Printf("\n🔍 WEBHOOK DEBUG - Product Update Received:\n")
+				fmt.Printf("\n?? WEBHOOK DEBUG - Product Update Received:\n")
 				fmt.Printf("Product ID: %d\n", shopifyProduct.ID)
 				fmt.Printf("Product Title: %s\n", shopifyProduct.Title)
 				fmt.Printf("Number of Variants: %d\n", len(shopifyProduct.Variants))
@@ -3473,7 +3477,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				c.ShouldBindJSON(&options)
 
 				// Log the optimization options
-				fmt.Printf("🎯 Optimization Options:\n")
+				fmt.Printf("?? Optimization Options:\n")
 				fmt.Printf("  Type: %s\n", options.OptimizationType)
 				fmt.Printf("  AI Model: %s\n", options.AIModel)
 				fmt.Printf("  Language: %s\n", options.Language)
@@ -3535,7 +3539,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Call AI optimization with custom options
-				fmt.Printf("\n🤖 Starting AI Optimization for product: %s (ID: %s)\n", title, id)
+				fmt.Printf("\n?? Starting AI Optimization for product: %s (ID: %s)\n", title, id)
 				seoEnhancement := enhanceProductSEOWithOptions(
 					shopifyProduct,
 					options.OptimizationType,
@@ -3545,7 +3549,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					options.OptimizationLevel,
 					options.CustomInstructions,
 				)
-				fmt.Printf("✅ AI Optimization completed\n")
+				fmt.Printf("? AI Optimization completed\n")
 
 				// Update product metadata with AI-generated SEO
 				var existingMetadata map[string]interface{}
@@ -3847,19 +3851,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					supabaseURL := os.Getenv("SUPABASE_URL")
 					supabaseKey := os.Getenv("SUPABASE_KEY")
 
-					fmt.Printf("🔍 Supabase Config - URL: %s, Key: %s\n", supabaseURL, supabaseKey)
+					fmt.Printf("?? Supabase Config - URL: %s, Key: %s\n", supabaseURL, supabaseKey)
 
 					var imageUrl string
 					if supabaseURL != "" && supabaseKey != "" {
 						// Initialize Supabase client
-						fmt.Printf("🚀 Creating Supabase client...\n")
+						fmt.Printf("?? Creating Supabase client...\n")
 						client, err := supabase.NewClient(supabaseURL, supabaseKey, nil)
 						if err != nil {
-							fmt.Printf("❌ Error creating Supabase client: %v\n", err)
+							fmt.Printf("? Error creating Supabase client: %v\n", err)
 							// Fallback to placeholder
 							imageUrl = fmt.Sprintf("https://picsum.photos/400/300?random=%d", time.Now().UnixNano())
 						} else {
-							fmt.Printf("✅ Supabase client created successfully\n")
+							fmt.Printf("? Supabase client created successfully\n")
 							// Read file content
 							src, err := file.Open()
 							if err != nil {
@@ -3870,29 +3874,29 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 								// Upload to Supabase Storage using the correct API
 								filePath := fmt.Sprintf("products/%s", filename)
-								fmt.Printf("📤 Uploading to Supabase: bucket=product-images, path=%s\n", filePath)
+								fmt.Printf("?? Uploading to Supabase: bucket=product-images, path=%s\n", filePath)
 								_, err = client.Storage.UploadFile("product-images", filePath, src)
 								if err != nil {
-									fmt.Printf("❌ Error uploading to Supabase: %v\n", err)
+									fmt.Printf("? Error uploading to Supabase: %v\n", err)
 									// Fallback to placeholder
 									imageUrl = fmt.Sprintf("https://picsum.photos/400/300?random=%d", time.Now().UnixNano())
 								} else {
 									// Get public URL
 									imageUrl = fmt.Sprintf("%s/storage/v1/object/public/product-images/%s", supabaseURL, filePath)
-									fmt.Printf("✅ Upload successful! URL: %s\n", imageUrl)
+									fmt.Printf("? Upload successful! URL: %s\n", imageUrl)
 								}
 							}
 						}
 					} else {
 						// No Supabase config, use placeholder
-						fmt.Printf("⚠️ No Supabase config found, using placeholder image\n")
+						fmt.Printf("?? No Supabase config found, using placeholder image\n")
 						imageUrl = fmt.Sprintf("https://picsum.photos/400/300?random=%d", time.Now().UnixNano())
 					}
 
 					imageUrls = append(imageUrls, imageUrl)
 
 					// Log the upload (in production, save to actual storage)
-					fmt.Printf("📁 Image uploaded: %s (Size: %d bytes, Type: %s)\n",
+					fmt.Printf("?? Image uploaded: %s (Size: %d bytes, Type: %s)\n",
 						filename, file.Size, file.Header.Get("Content-Type"))
 				}
 
@@ -5016,18 +5020,18 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// ðŸš€ AUTOMATIC WEBHOOK SETUP - No manual configuration needed!
+			// 🚀 AUTOMATIC WEBHOOK SETUP - No manual configuration needed!
 			webhookResults := setupAutomaticWebhooks(shop, accessToken)
 
 			// Log webhook setup results
-			fmt.Printf("ðŸ”— Webhook Setup Results for %s:\n", shop)
+			fmt.Printf("🔗 Webhook Setup Results for %s:\n", shop)
 			successCount := 0
 			for topic, result := range webhookResults {
 				if result["success"].(bool) {
-					fmt.Printf("âœ… %s: %s\n", topic, result["message"])
+					fmt.Printf("✅ %s: %s\n", topic, result["message"])
 					successCount++
 				} else {
-					fmt.Printf("âŒ %s: %s\n", topic, result["message"])
+					fmt.Printf("❌ %s: %s\n", topic, result["message"])
 				}
 			}
 
@@ -5130,10 +5134,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Transform product (Shopify should include inventory data by default)
 				transformedProduct := transformShopifyProduct(product, connector.ShopDomain, make(map[int64]int))
 
-				// ðŸš€ AI-POWERED SEO ENHANCEMENT
-				fmt.Printf("ðŸ” Enhancing SEO for product: %s\n", product.Title)
+				// 🚀 AI-POWERED SEO ENHANCEMENT
+				fmt.Printf("🔍 Enhancing SEO for product: %s\n", product.Title)
 				seoEnhancement := enhanceProductSEO(product)
-				fmt.Printf("ðŸ” SEO Enhancement result: %+v\n", seoEnhancement)
+				fmt.Printf("🔍 SEO Enhancement result: %+v\n", seoEnhancement)
 
 				// Create enhanced metadata with SEO data
 				enhancedMetadata := map[string]interface{}{
@@ -5143,19 +5147,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					"meta_keywords":   seoEnhancement.MetaKeywords,
 					"alt_text":        seoEnhancement.AltText,
 					"schema_markup":   seoEnhancement.SchemaMarkup,
-					"seo_enhanced":    true,
-					"seo_enhanced_at": time.Now().Format(time.RFC3339),
+					"seo_enhanced":    false,
+					"seo_enhanced_at": "",
 				}
 
 				// Convert enhanced metadata to JSON
 				enhancedMetadataJSON, _ := json.Marshal(enhancedMetadata)
-				fmt.Printf("ðŸ” Enhanced metadata JSON: %s\n", string(enhancedMetadataJSON))
+				fmt.Printf("🔍 Enhanced metadata JSON: %s\n", string(enhancedMetadataJSON))
 
 				// Convert Go slice to PostgreSQL array format for images
 				imageURLsArray := "{" + strings.Join(transformedProduct.Images, ",") + "}"
 
 				// Try upsert first, fallback to check-and-insert if constraint doesn't exist
-				fmt.Printf("ðŸ” About to insert/update product with metadata length: %d\n", len(string(enhancedMetadataJSON)))
+				fmt.Printf("🔍 About to insert/update product with metadata length: %d\n", len(string(enhancedMetadataJSON)))
 				_, err := db.Exec(`
 						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, updated_at)
 						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
@@ -5179,9 +5183,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
 
 				if err != nil {
-					fmt.Printf("ðŸ” Database error: %v\n", err)
+					fmt.Printf("🔍 Database error: %v\n", err)
 				} else {
-					fmt.Printf("ðŸ” Product successfully updated with SEO metadata\n")
+					fmt.Printf("🔍 Product successfully updated with SEO metadata\n")
 				}
 
 				// If upsert fails due to missing constraint, fallback to check-and-insert
@@ -5195,7 +5199,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 					if checkErr == nil {
 						// Product exists, update it
-						fmt.Printf("ðŸ” Updating existing product %s with metadata length: %d\n", existingID, len(string(enhancedMetadataJSON)))
+						fmt.Printf("🔍 Updating existing product %s with metadata length: %d\n", existingID, len(string(enhancedMetadataJSON)))
 						_, err = db.Exec(`
 								UPDATE products SET 
 									title = $1, description = $2, price = $3, currency = $4, 
@@ -5207,9 +5211,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							transformedProduct.Category, imageURLsArray, transformedProduct.Variants,
 							string(enhancedMetadataJSON), "ACTIVE", existingID)
 						if err != nil {
-							fmt.Printf("ðŸ” Update error: %v\n", err)
+							fmt.Printf("🔍 Update error: %v\n", err)
 						} else {
-							fmt.Printf("ðŸ” Product updated successfully\n")
+							fmt.Printf("🔍 Product updated successfully\n")
 						}
 					} else {
 						// Product doesn't exist, insert it
