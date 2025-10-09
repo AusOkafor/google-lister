@@ -5744,47 +5744,6 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			})
 		})
 
-		// Analyze Images
-		optimizer.POST("/image", func(c *gin.Context) {
-			var req map[string]interface{}
-			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
-				return
-			}
-
-			productID, ok := req["product_id"].(string)
-			if !ok || productID == "" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "product_id is required"})
-				return
-			}
-
-			historyID := fmt.Sprintf("%d", time.Now().UnixNano())
-
-			c.JSON(http.StatusOK, gin.H{
-				"optimization_id": historyID,
-				"product_id":      productID,
-				"analysis": gin.H{
-					"overall_score": 85,
-					"quality_metrics": gin.H{
-						"resolution":     92,
-						"composition":    78,
-						"lighting":       82,
-						"color_accuracy": 88,
-					},
-					"recommendations": []gin.H{
-						{
-							"type":        "quality",
-							"title":       "Improve Image Quality",
-							"priority":    "high",
-							"description": "Enhance resolution and sharpness",
-						},
-					},
-				},
-				"cost":    0.005,
-				"message": "Image analysis completed successfully",
-			})
-		})
-
 		// Bulk Optimization
 		optimizer.POST("/bulk", func(c *gin.Context) {
 			var req map[string]interface{}
