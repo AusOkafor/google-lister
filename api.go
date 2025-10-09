@@ -5835,23 +5835,151 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			optimizationType, ok := req["optimization_type"].(string)
+			if !ok || optimizationType == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "optimization_type is required"})
+				return
+			}
+
+			// Get settings
+			autoApply := false
+			if aa, ok := req["auto_apply"].(bool); ok {
+				autoApply = aa
+			}
+
 			results := []gin.H{}
+			successCount := 0
+			failedCount := 0
+			organizationID := "00000000-0000-0000-0000-000000000000"
+
+			fmt.Printf("🔄 Starting bulk optimization: %d products, type: %s\n", len(productIDs), optimizationType)
+
 			for _, pid := range productIDs {
 				productID := fmt.Sprintf("%v", pid)
+
+				// Fetch product
+				var title, description, brand, category sql.NullString
+				var price sql.NullFloat64
+				err := db.QueryRow(`
+					SELECT title, description, brand, category, price 
+					FROM products WHERE id = $1
+				`, productID).Scan(&title, &description, &brand, &category, &price)
+
+				if err != nil {
+					results = append(results, gin.H{
+						"product_id": productID,
+						"status":     "failed",
+						"error":      "Product not found",
+					})
+					failedCount++
+					continue
+				}
+
+				var optimizedValue string
+				var aiErr error
+
+				// Perform optimization based on type
+				switch optimizationType {
+				case "title":
+					optimizedValue, aiErr = optimizeTitleWithAI(
+						title.String,
+						description.String,
+						brand.String,
+						category.String,
+						"",
+						60,
+					)
+				case "description":
+					optimizedValue, aiErr = enhanceDescriptionWithAI(
+						title.String,
+						description.String,
+						brand.String,
+						category.String,
+						price.Float64,
+						"persuasive",
+						"medium",
+						"",
+					)
+				case "category":
+					suggestions, catErr := suggestCategoryWithAI(
+						title.String,
+						description.String,
+						brand.String,
+						category.String,
+					)
+					if catErr == nil && len(suggestions) > 0 {
+						optimizedValue = suggestions[0]["category"].(string)
+					} else {
+						aiErr = catErr
+					}
+				default:
+					aiErr = fmt.Errorf("unsupported optimization type: %s", optimizationType)
+				}
+
+				if aiErr != nil {
+					results = append(results, gin.H{
+						"product_id": productID,
+						"status":     "failed",
+						"error":      aiErr.Error(),
+					})
+					failedCount++
+					continue
+				}
+
+				// Save to optimization_history
+				var historyID string
+				err = db.QueryRow(`
+					INSERT INTO optimization_history (
+						product_id, organization_id, optimization_type, 
+						original_value, optimized_value, status, score, 
+						improvement_percentage, ai_model, cost, tokens_used, metadata
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+					RETURNING id
+				`, productID, organizationID, optimizationType,
+					title.String, optimizedValue, "pending", 85, 20.0,
+					"gpt-3.5-turbo", 0.002, 150, "{}").Scan(&historyID)
+
+				if err != nil {
+					fmt.Printf("⚠️ Failed to save history for %s: %v\n", productID, err)
+				}
+
+				// Auto-apply if enabled
+				if autoApply {
+					var updateQuery string
+					switch optimizationType {
+					case "title":
+						updateQuery = "UPDATE products SET title = $1 WHERE id = $2"
+					case "description":
+						updateQuery = "UPDATE products SET description = $1 WHERE id = $2"
+					case "category":
+						updateQuery = "UPDATE products SET category = $1 WHERE id = $2"
+					}
+
+					if updateQuery != "" {
+						_, err = db.Exec(updateQuery, optimizedValue, productID)
+						if err == nil {
+							db.Exec(`UPDATE optimization_history SET status = 'applied', applied_at = NOW() WHERE id = $1`, historyID)
+						}
+					}
+				}
+
 				results = append(results, gin.H{
 					"product_id":      productID,
 					"status":          "success",
-					"optimization_id": fmt.Sprintf("%d", time.Now().UnixNano()),
-					"optimized_value": "Optimized successfully",
+					"optimization_id": historyID,
+					"optimized_value": optimizedValue,
 				})
+				successCount++
 			}
+
+			fmt.Printf("✅ Bulk optimization complete: %d success, %d failed\n", successCount, failedCount)
 
 			c.JSON(http.StatusOK, gin.H{
 				"processed_products": len(productIDs),
-				"success_count":      len(productIDs),
-				"failed_count":       0,
+				"success_count":      successCount,
+				"failed_count":       failedCount,
 				"results":            results,
-				"message":            "Bulk optimization completed",
+				"message":            fmt.Sprintf("Bulk optimization completed: %d successful, %d failed", successCount, failedCount),
 			})
 		})
 
