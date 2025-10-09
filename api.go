@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lib/pq"
 	"github.com/rs/cors"
 	"github.com/supabase-community/supabase-go"
 )
@@ -103,6 +102,19 @@ func enhanceProductSEO(product ShopifyProduct) SEOEnhancement {
 	return createFallbackSEO(product)
 }
 
+// Enhanced version with custom options
+func enhanceProductSEOWithOptions(product ShopifyProduct, optimizationType, aiModel, language, audience, optimizationLevel, customInstructions string) SEOEnhancement {
+	// Try OpenRouter AI enhancement with options
+	enhancement, err := callOpenRouterForSEOWithOptions(product, optimizationType, aiModel, language, audience, optimizationLevel, customInstructions)
+	if err == nil {
+		return enhancement
+	}
+	fmt.Printf("[WARN] OpenRouter AI SEO enhancement failed, using fallback: %v\n", err)
+
+	// Fallback to rule-based approach
+	return createFallbackSEO(product)
+}
+
 // callOpenRouterForSEO - Make API call to OpenRouter for SEO enhancement
 func callOpenRouterForSEO(product ShopifyProduct) (SEOEnhancement, error) {
 	// Convert product to map for AI processing
@@ -152,6 +164,153 @@ Requirements:
 
 Return ONLY the JSON response, no explanations.
 `, string(productJSON))
+
+	// Use the existing OpenRouter AI function
+	response, err := callOpenRouterAI(prompt, 500, 0.7)
+	if err != nil {
+		return SEOEnhancement{}, fmt.Errorf("OpenRouter AI call failed: %v", err)
+	}
+
+	// Parse AI response
+	var enhancement SEOEnhancement
+	if err := json.Unmarshal([]byte(response), &enhancement); err != nil {
+		return SEOEnhancement{}, fmt.Errorf("failed to parse AI response: %v", err)
+	}
+
+	return enhancement, nil
+}
+
+// callOpenRouterForSEOWithOptions - Make API call with custom options
+func callOpenRouterForSEOWithOptions(product ShopifyProduct, optimizationType, aiModel, language, audience, optimizationLevel, customInstructions string) (SEOEnhancement, error) {
+	// Set defaults if not provided
+	if optimizationType == "" {
+		optimizationType = "all"
+	}
+	if language == "" {
+		language = "en"
+	}
+	if audience == "" {
+		audience = "general"
+	}
+	if optimizationLevel == "" {
+		optimizationLevel = "balanced"
+	}
+
+	// Convert product to map for AI processing
+	price := "0"
+	sku := ""
+	if len(product.Variants) > 0 {
+		price = product.Variants[0].Price
+		sku = product.Variants[0].SKU
+	}
+
+	productMap := map[string]interface{}{
+		"title":        product.Title,
+		"description":  product.Description,
+		"product_type": product.ProductType,
+		"vendor":       product.Vendor,
+		"price":        price,
+		"sku":          sku,
+	}
+
+	productJSON, err := json.Marshal(productMap)
+	if err != nil {
+		return SEOEnhancement{}, fmt.Errorf("failed to marshal product: %v", err)
+	}
+
+	// Build language-specific instructions
+	languageInstructions := map[string]string{
+		"en": "in English",
+		"es": "in Spanish (Español)",
+		"fr": "in French (Français)",
+		"de": "in German (Deutsch)",
+	}
+	langInstruction := languageInstructions[language]
+	if langInstruction == "" {
+		langInstruction = "in English"
+	}
+
+	// Build audience-specific instructions
+	audienceInstructions := map[string]string{
+		"general":       "general audience",
+		"professionals": "professional audience (business-focused, technical terms are OK)",
+		"students":      "students and young adults (clear, educational tone)",
+		"families":      "families and parents (warm, family-friendly tone)",
+	}
+	audienceInstruction := audienceInstructions[audience]
+	if audienceInstruction == "" {
+		audienceInstruction = "general audience"
+	}
+
+	// Build optimization level instructions
+	levelInstructions := map[string]string{
+		"conservative": "Make minimal changes, preserve the original tone and style. Only fix obvious issues.",
+		"balanced":     "Balance between keeping the original style and adding improvements. Moderate SEO optimization.",
+		"aggressive":   "Maximize SEO potential. Rewrite completely for best search visibility and conversion.",
+	}
+	levelInstruction := levelInstructions[optimizationLevel]
+	if levelInstruction == "" {
+		levelInstruction = levelInstructions["balanced"]
+	}
+
+	// Build custom instructions section
+	customSection := ""
+	if customInstructions != "" {
+		customSection = fmt.Sprintf(`
+
+IMPORTANT CUSTOM INSTRUCTIONS FROM USER:
+%s
+
+Follow these custom instructions carefully.`, customInstructions)
+	}
+
+	// Build optimization type-specific instructions
+	optimizationFocus := ""
+	switch optimizationType {
+	case "title":
+		optimizationFocus = "Focus ONLY on optimizing the SEO title. Keep description and other fields minimal."
+	case "description":
+		optimizationFocus = "Focus ONLY on optimizing the SEO description. Keep title and other fields minimal."
+	case "category":
+		optimizationFocus = "Focus on improving category classification and keywords."
+	case "tags":
+		optimizationFocus = "Focus on generating comprehensive, relevant keywords and tags."
+	case "seo":
+		optimizationFocus = "Focus on technical SEO elements: schema markup, meta tags, alt text."
+	default:
+		optimizationFocus = "Optimize all aspects: title, description, keywords, and technical SEO."
+	}
+
+	// Create enhanced AI prompt
+	prompt := fmt.Sprintf(`You are an expert e-commerce SEO specialist. Analyze this product and provide comprehensive SEO optimization %s.
+
+Product data: %s
+
+TARGET LANGUAGE: %s
+TARGET AUDIENCE: %s
+OPTIMIZATION LEVEL: %s
+FOCUS: %s
+%s
+
+Provide a JSON response with the following structure:
+{
+  "seo_title": "Optimized title under 60 characters",
+  "seo_description": "Meta description under 160 characters",
+  "keywords": ["keyword1", "keyword2", "keyword3"],
+  "meta_keywords": "keyword1, keyword2, keyword3",
+  "alt_text": "Descriptive alt text for product images",
+  "schema_markup": "JSON-LD structured data for the product"
+}
+
+Requirements:
+- SEO title: Under 60 characters, keyword-rich, compelling, written %s
+- SEO description: Under 160 characters, persuasive, includes CTA, written %s for %s
+- Keywords: 5-10 relevant keywords from title, category, brand
+- Alt text: Descriptive, includes product name and key features
+- Schema markup: Valid JSON-LD for Product type with name, description, brand, category
+
+Return ONLY the JSON response, no explanations.
+`, langInstruction, string(productJSON), langInstruction, audienceInstruction, levelInstruction, optimizationFocus, customSection, langInstruction, langInstruction, audienceInstruction)
 
 	// Use the existing OpenRouter AI function
 	response, err := callOpenRouterAI(prompt, 500, 0.7)
@@ -3279,259 +3438,165 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			})
 
 			// Create new product
+			// PRODUCT CREATION DISABLED
+			// Products should be created in Shopify, then synced to this app
+			// Creating products here without syncing to Shopify is useless - customers can't buy them
 			products.POST("/", func(c *gin.Context) {
+				c.JSON(http.StatusNotImplemented, gin.H{
+					"error":   "Product creation is disabled",
+					"message": "Please create products in your Shopify admin. They will automatically sync to this app.",
+					"reason":  "Products created here don't exist in Shopify, so customers cannot purchase them",
+				})
+			})
+
+			// AI Optimize Product - Generate optimized SEO content using OpenRouter
+			products.POST("/:id/optimize", func(c *gin.Context) {
 				// Add CORS headers
 				c.Header("Access-Control-Allow-Origin", "*")
 				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 				c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-				var err error
+				productID := c.Param("id")
 
-				var productData map[string]interface{}
-				if err := c.ShouldBindJSON(&productData); err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON: " + err.Error()})
-					return
+				// Parse optimization options from request body
+				var options struct {
+					OptimizationType   string `json:"optimization_type"`
+					AIModel            string `json:"ai_model"`
+					Language           string `json:"language"`
+					Audience           string `json:"audience"`
+					OptimizationLevel  string `json:"optimization_level"`
+					CustomInstructions string `json:"custom_instructions"`
+					IncludeVariants    bool   `json:"include_variants"`
 				}
+				c.ShouldBindJSON(&options)
 
-				// Validate required fields
-				title, hasTitle := productData["title"].(string)
-				if !hasTitle || title == "" {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
-					return
-				}
+				// Log the optimization options
+				fmt.Printf("🎯 Optimization Options:\n")
+				fmt.Printf("  Type: %s\n", options.OptimizationType)
+				fmt.Printf("  AI Model: %s\n", options.AIModel)
+				fmt.Printf("  Language: %s\n", options.Language)
+				fmt.Printf("  Audience: %s\n", options.Audience)
+				fmt.Printf("  Level: %s\n", options.OptimizationLevel)
+				fmt.Printf("  Custom Instructions: %s\n", options.CustomInstructions)
+				fmt.Printf("  Include Variants: %v\n", options.IncludeVariants)
 
-				price, hasPrice := productData["price"].(float64)
-				if !hasPrice || price < 0 {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "price is required and must be a positive number"})
-					return
-				}
-
-				// Generate external_id and SKU if not provided
-				externalID := fmt.Sprintf("manual_product_%d", time.Now().Unix())
-				sku := fmt.Sprintf("SKU-%d", time.Now().Unix())
-				if providedSku, ok := productData["sku"].(string); ok && providedSku != "" {
-					sku = providedSku
-				}
-				if providedExternalId, ok := productData["external_id"].(string); ok && providedExternalId != "" {
-					externalID = providedExternalId
-				}
-
-				// connector_id is optional - only set if explicitly provided
-				// For manual products, this will be NULL by default (not linked to any Shopify store)
-				var connectorID sql.NullString
-				if providedConnectorId, ok := productData["connector_id"].(string); ok && providedConnectorId != "" && providedConnectorId != "none" {
-					connectorID = sql.NullString{String: providedConnectorId, Valid: true}
-				}
-
-				// Prepare images as PostgreSQL array
-				var imagesArray []string
-				if images, ok := productData["images"]; ok {
-					if imagesSlice, ok := images.([]interface{}); ok {
-						for _, img := range imagesSlice {
-							if imgStr, ok := img.(string); ok {
-								imagesArray = append(imagesArray, imgStr)
-							}
-						}
-					}
-				}
-
-				// Create proper variants structure (matching Shopify format)
-				var variantsJSON string
-				if variants, ok := productData["variants"]; ok {
-					if variantsBytes, err := json.Marshal(variants); err == nil {
-						variantsJSON = string(variantsBytes)
-					}
-				} else {
-					// Create default variant structure like Shopify
-					defaultVariant := []map[string]interface{}{
-						{
-							"id":                   fmt.Sprintf("manual_variant_%d", time.Now().Unix()),
-							"sku":                  sku,
-							"price":                fmt.Sprintf("%.2f", price),
-							"title":                "Default Title",
-							"available":            nil,
-							"inventory_policy":     "deny",
-							"inventory_quantity":   1,
-							"inventory_management": "",
-						},
-					}
-					if defaultBytes, err := json.Marshal(defaultVariant); err == nil {
-						variantsJSON = string(defaultBytes)
-					}
-				}
-
-				var metadataJSON string
-				if metadata, ok := productData["metadata"]; ok {
-					if metadataBytes, err := json.Marshal(metadata); err == nil {
-						metadataJSON = string(metadataBytes)
-					}
-				}
-
-				var shippingJSON string
-				if shipping, ok := productData["shipping"]; ok {
-					if shippingBytes, err := json.Marshal(shipping); err == nil {
-						shippingJSON = string(shippingBytes)
-					}
-				}
-
-				// Prepare custom_labels as PostgreSQL array
-				var customLabelsArray []string
-				if customLabels, ok := productData["custom_labels"]; ok {
-					if customLabelsSlice, ok := customLabels.([]interface{}); ok {
-						for _, label := range customLabelsSlice {
-							if labelStr, ok := label.(string); ok {
-								customLabelsArray = append(customLabelsArray, labelStr)
-							}
-						}
-					}
-				}
-
-				// Extract optional fields
-				description := ""
-				if desc, ok := productData["description"].(string); ok {
-					description = desc
-				}
-
-				brand := ""
-				if b, ok := productData["brand"].(string); ok {
-					brand = b
-				}
-
-				category := "EMPTY" // Default category like synced products
-				if cat, ok := productData["category"].(string); ok && cat != "" {
-					category = cat
-				}
-
-				gtin := ""
-				if g, ok := productData["gtin"].(string); ok {
-					gtin = g
-				}
-
-				currency := "USD"
-				if curr, ok := productData["currency"].(string); ok {
-					currency = curr
-				}
-
-				// Note: mpn, availability, and tax_class are accepted from frontend but not stored in database
-				// since these columns don't exist in the current schema
-
-				// AI-Powered SEO Enhancement (matching synced product structure)
-				enhancedMetadata := metadataJSON
-				if metadataJSON == "" {
-					// Create basic metadata structure for SEO enhancement (matching synced products)
-					basicMetadata := map[string]interface{}{
-						"seo_title":       "",
-						"seo_description": "",
-						"keywords":        []string{},
-						"alt_text":        "",
-						"meta_keywords":   "",
-						"schema_markup":   "",
-						"seo_enhanced":    false,
-						"seo_enhanced_at": "",
-					}
-					if basicBytes, err := json.Marshal(basicMetadata); err == nil {
-						enhancedMetadata = string(basicBytes)
-					}
-				}
-
-				// Basic SEO Enhancement (matching synced product format exactly)
-				fmt.Printf("🔍 SEO Enhancement Debug - Title: %s, Description: %s, Brand: %s, Category: %s\n", title, description, brand, category)
-
-				var existingMetadata map[string]interface{}
-				if err := json.Unmarshal([]byte(enhancedMetadata), &existingMetadata); err == nil {
-					fmt.Printf("🔍 SEO Enhancement Debug - Existing metadata: %+v\n", existingMetadata)
-
-					// Add SEO enhancements matching synced product format exactly
-					// Always override with fresh SEO data for manually created products
-					existingMetadata["seo_title"] = title
-					existingMetadata["seo_description"] = description
-					if brand != "" {
-						existingMetadata["alt_text"] = fmt.Sprintf("%s - product from %s", title, brand)
-					} else {
-						existingMetadata["alt_text"] = title
-					}
-
-					// Build keywords array
-					keywords := []string{title}
-					if category != "" && category != "EMPTY" {
-						keywords = append(keywords, category)
-					}
-					if brand != "" {
-						keywords = append(keywords, brand)
-					}
-					keywords = append(keywords, "online shopping", "buy online")
-					existingMetadata["keywords"] = keywords
-
-					// Build meta keywords string
-					metaKeywords := title
-					if category != "" && category != "EMPTY" {
-						metaKeywords += ", " + category
-					}
-					if brand != "" {
-						metaKeywords += ", " + brand
-					}
-					metaKeywords += ", online shopping, buy online"
-					existingMetadata["meta_keywords"] = metaKeywords
-
-					// Create schema markup
-					schemaCategory := category
-					if schemaCategory == "EMPTY" {
-						schemaCategory = ""
-					}
-					schemaDescription := description
-					if schemaDescription == "" {
-						schemaDescription = title
-					}
-					schemaBrand := brand
-					if schemaBrand == "" {
-						schemaBrand = "Generic"
-					}
-					existingMetadata["schema_markup"] = fmt.Sprintf(`{"@context":"https://schema.org","@type":"Product","name":"%s","description":"%s","brand":{"@type":"Brand","name":"%s"},"category":"%s"}`,
-						title, schemaDescription, schemaBrand, schemaCategory)
-					existingMetadata["seo_enhanced"] = true
-					existingMetadata["seo_enhanced_at"] = time.Now().Format(time.RFC3339)
-
-					// Convert back to JSON
-					if enhancedBytes, err := json.Marshal(existingMetadata); err == nil {
-						enhancedMetadata = string(enhancedBytes)
-						fmt.Printf("🔍 SEO Enhancement Debug - Enhanced metadata: %s\n", enhancedMetadata)
-					}
-				} else {
-					fmt.Printf("🔍 SEO Enhancement Debug - Error parsing metadata: %v\n", err)
-				}
-
-				// Insert product (let database generate UUID for id)
-				var generatedID string
-				// Extract compare_at_price from metadata if available
+				// Get product from database
+				var id, externalID, title, description, brand, category, status string
+				var sku sql.NullString
+				var price sql.NullFloat64
 				var compareAtPrice sql.NullFloat64
-				if metadata, ok := productData["metadata"]; ok {
-					if metadataMap, ok := metadata.(map[string]interface{}); ok {
-						if comparePrice, ok := metadataMap["compare_at_price"]; ok {
-							if comparePriceFloat, ok := comparePrice.(float64); ok {
-								compareAtPrice = sql.NullFloat64{Float64: comparePriceFloat, Valid: true}
-							}
-						}
-					}
-				}
+				var currency string
+				var images, variants, metadata sql.NullString
+				var createdAt, updatedAt time.Time
 
-				err = db.QueryRow(`
-				INSERT INTO products (connector_id, external_id, title, description, price, compare_at_price, currency, sku, gtin, brand, category, images, variants, metadata, shipping, custom_labels, status, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
-				RETURNING id
-			`, connectorID, externalID, title, description, price, compareAtPrice, currency, sku, gtin, brand, category, pq.Array(imagesArray), variantsJSON, enhancedMetadata, shippingJSON, pq.Array(customLabelsArray), "ACTIVE").Scan(&generatedID)
+				err := db.QueryRow(`
+					SELECT id, external_id, title, description, price, compare_at_price, currency, sku, brand, category, 
+						   images, variants, metadata, status, created_at, updated_at
+					FROM products 
+					WHERE id = $1
+				`, productID).Scan(&id, &externalID, &title, &description, &price, &compareAtPrice, &currency, &sku, &brand, &category,
+					&images, &variants, &metadata, &status, &createdAt, &updatedAt)
 
 				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create product: " + err.Error()})
+					if err == sql.ErrNoRows {
+						c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+					} else {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch product"})
+					}
 					return
 				}
 
-				c.JSON(http.StatusCreated, gin.H{
-					"message":      "Product created successfully",
-					"id":           generatedID,
-					"external_id":  externalID,
-					"connector_id": connectorID.String, // Will be empty if not provided
-					"seo_enhanced": true,
-					"is_manual":    true, // Flag to indicate this was manually created
+				// Create ShopifyProduct structure for AI optimization
+				shopifyProduct := ShopifyProduct{
+					Title:       title,
+					Description: description,
+					Vendor:      brand,
+					ProductType: category,
+				}
+
+				// Parse variants to get price
+				if variants.Valid && variants.String != "" {
+					var variantsList []ShopifyVariant
+					if err := json.Unmarshal([]byte(variants.String), &variantsList); err == nil && len(variantsList) > 0 {
+						shopifyProduct.Variants = variantsList
+					}
+				}
+
+				// If no variants, create one from product price
+				if len(shopifyProduct.Variants) == 0 && price.Valid {
+					shopifyProduct.Variants = []ShopifyVariant{
+						{
+							Price: fmt.Sprintf("%.2f", price.Float64),
+							SKU:   getStringValue(sku),
+						},
+					}
+				}
+
+				// Call AI optimization with custom options
+				fmt.Printf("\n🤖 Starting AI Optimization for product: %s (ID: %s)\n", title, id)
+				seoEnhancement := enhanceProductSEOWithOptions(
+					shopifyProduct,
+					options.OptimizationType,
+					options.AIModel,
+					options.Language,
+					options.Audience,
+					options.OptimizationLevel,
+					options.CustomInstructions,
+				)
+				fmt.Printf("✅ AI Optimization completed\n")
+
+				// Update product metadata with AI-generated SEO
+				var existingMetadata map[string]interface{}
+				if metadata.Valid && metadata.String != "" {
+					json.Unmarshal([]byte(metadata.String), &existingMetadata)
+				} else {
+					existingMetadata = make(map[string]interface{})
+				}
+
+				// Update with new SEO data
+				existingMetadata["seo_title"] = seoEnhancement.SEOTitle
+				existingMetadata["seo_description"] = seoEnhancement.SEODescription
+				existingMetadata["keywords"] = seoEnhancement.Keywords
+				existingMetadata["meta_keywords"] = seoEnhancement.MetaKeywords
+				existingMetadata["alt_text"] = seoEnhancement.AltText
+				existingMetadata["schema_markup"] = seoEnhancement.SchemaMarkup
+				existingMetadata["seo_enhanced"] = true
+				existingMetadata["seo_enhanced_at"] = time.Now().Format(time.RFC3339)
+
+				// Convert back to JSON
+				updatedMetadataJSON, _ := json.Marshal(existingMetadata)
+
+				// Update database
+				_, err = db.Exec(`
+					UPDATE products 
+					SET metadata = $1, updated_at = NOW()
+					WHERE id = $2
+				`, string(updatedMetadataJSON), productID)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update product with optimizations"})
+					return
+				}
+
+				// Return optimization results
+				c.JSON(http.StatusOK, gin.H{
+					"message":    "Product optimized successfully",
+					"product_id": productID,
+					"optimizations": gin.H{
+						"seo_title":       seoEnhancement.SEOTitle,
+						"seo_description": seoEnhancement.SEODescription,
+						"keywords":        seoEnhancement.Keywords,
+						"meta_keywords":   seoEnhancement.MetaKeywords,
+						"alt_text":        seoEnhancement.AltText,
+						"schema_markup":   seoEnhancement.SchemaMarkup,
+					},
+					"original": gin.H{
+						"title":       title,
+						"description": description,
+						"category":    category,
+						"brand":       brand,
+					},
+					"timestamp": time.Now(),
 				})
 			})
 
