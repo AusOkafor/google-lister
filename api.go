@@ -1242,8 +1242,8 @@ func enhanceProductDescription(title, description, brand, category string, price
 		length = "medium"
 	}
 
-	// Try AI enhancement first
-	aiDescription, err := enhanceDescriptionWithAI(title, description, brand, category, price, style, length)
+	// Try AI enhancement first (no custom instructions in this path)
+	aiDescription, err := enhanceDescriptionWithAI(title, description, brand, category, price, style, length, "")
 	if err == nil && aiDescription != "" {
 		return aiDescription
 	}
@@ -1253,7 +1253,8 @@ func enhanceProductDescription(title, description, brand, category string, price
 }
 
 // enhanceDescriptionWithAI uses OpenRouter AI for description enhancement
-func enhanceDescriptionWithAI(title, description, brand, category string, price float64, style, length string) (string, error) {
+func enhanceDescriptionWithAI(title, description, brand, category string, price float64, style, length, customInstructions string) (string, error) {
+	// Build the base prompt
 	prompt := fmt.Sprintf(`You are an expert e-commerce copywriter who specializes in creating compelling product descriptions that drive sales and conversions.
 
 PRODUCT INFORMATION:
@@ -1279,9 +1280,17 @@ COPYWRITING REQUIREMENTS:
 STYLE GUIDELINES:
 - Marketing: Focus on benefits, emotional appeal, social proof
 - Technical: Detailed specifications, features, performance
-- Casual: Friendly, conversational, approachable
+- Casual: Friendly, conversational, approachable`, title, description, brand, category, price, style, length, style, length)
 
-Create a description that makes customers excited to buy this product. Return ONLY the enhanced description:`, title, description, brand, category, price, style, length, style, length)
+	// Add custom instructions if provided
+	if customInstructions != "" {
+		prompt += fmt.Sprintf(`
+
+CUSTOM INSTRUCTIONS (IMPORTANT - Follow these):
+%s`, customInstructions)
+	}
+
+	prompt += "\n\nCreate a description that makes customers excited to buy this product. Return ONLY the enhanced description:"
 
 	aiDescription, err := callOpenRouterAI(prompt, 300, 0.8)
 	if err != nil {
@@ -5584,6 +5593,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				length = l
 			}
 
+			customInstructions := ""
+			if ci, ok := req["custom_instructions"].(string); ok {
+				customInstructions = ci
+			}
+
 			// Parse price
 			var priceFloat float64
 			var productPrice sql.NullFloat64
@@ -5592,7 +5606,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				priceFloat = productPrice.Float64
 			}
 
-			// Call real AI function
+			// Call real AI function with custom instructions
 			optimizedDesc, err := enhanceDescriptionWithAI(
 				title.String,
 				originalDesc,
@@ -5601,6 +5615,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				priceFloat,
 				style,
 				length,
+				customInstructions,
 			)
 
 			if err != nil {
