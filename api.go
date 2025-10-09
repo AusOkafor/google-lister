@@ -401,6 +401,77 @@ func getStringArray(m map[string]interface{}, key string) []string {
 	return []string{}
 }
 
+// calculateSEOScore calculates a real SEO score based on product metadata quality
+func calculateSEOScore(metadata map[string]interface{}) int {
+	score := 0
+
+	// Title optimization (25 points)
+	if seoTitle, ok := metadata["seo_title"].(string); ok && seoTitle != "" {
+		titleLen := len(seoTitle)
+		if titleLen >= 30 && titleLen <= 60 {
+			score += 25 // Optimal length
+		} else if titleLen > 0 {
+			score += 15 // Has title but not optimal
+		}
+	}
+
+	// Description optimization (25 points)
+	if seoDesc, ok := metadata["seo_description"].(string); ok && seoDesc != "" {
+		descLen := len(seoDesc)
+		if descLen >= 120 && descLen <= 160 {
+			score += 25 // Optimal length
+		} else if descLen >= 50 {
+			score += 18 // Good length
+		} else if descLen > 0 {
+			score += 10 // Has description
+		}
+	}
+
+	// Keywords (20 points)
+	if keywords, ok := metadata["keywords"]; ok {
+		if keywordArray, ok := keywords.([]interface{}); ok {
+			keywordCount := len(keywordArray)
+			if keywordCount >= 5 && keywordCount <= 10 {
+				score += 20 // Optimal keyword count
+			} else if keywordCount >= 3 {
+				score += 15 // Good keyword count
+			} else if keywordCount > 0 {
+				score += 8 // Has some keywords
+			}
+		}
+	}
+
+	// Alt text (10 points)
+	if altText, ok := metadata["alt_text"].(string); ok && altText != "" {
+		if len(altText) >= 20 {
+			score += 10 // Good alt text
+		} else {
+			score += 5 // Has alt text
+		}
+	}
+
+	// Schema markup (15 points)
+	if schemaMarkup, ok := metadata["schema_markup"].(string); ok && schemaMarkup != "" {
+		if strings.Contains(schemaMarkup, "@context") && strings.Contains(schemaMarkup, "@type") {
+			score += 15 // Valid schema markup
+		} else {
+			score += 8 // Has schema but might be incomplete
+		}
+	}
+
+	// Meta keywords (5 points)
+	if metaKeywords, ok := metadata["meta_keywords"].(string); ok && metaKeywords != "" {
+		score += 5
+	}
+
+	// Ensure score is between 0 and 100
+	if score > 100 {
+		score = 100
+	}
+
+	return score
+}
+
 // createFallbackSEO - Create fallback SEO when AI fails
 func createFallbackSEO(product ShopifyProduct) SEOEnhancement {
 	title := product.Title
@@ -3348,6 +3419,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 
+					// Calculate real SEO score from metadata
+					var metadataMap map[string]interface{}
+					seoScore := 0
+					if metadata.Valid && metadata.String != "" {
+						if err := json.Unmarshal([]byte(metadata.String), &metadataMap); err == nil {
+							seoScore = calculateSEOScore(metadataMap)
+						}
+					}
+
 					products = append(products, map[string]interface{}{
 						"id":               id,
 						"external_id":      externalID,
@@ -3365,6 +3445,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"status":           status,
 						"created_at":       createdAt,
 						"updated_at":       updatedAt,
+						"seo_score":        seoScore,
 					})
 				}
 
