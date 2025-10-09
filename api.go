@@ -317,15 +317,34 @@ Return ONLY the JSON response, no explanations.
 	// Use the existing OpenRouter AI function
 	response, err := callOpenRouterAI(prompt, 500, 0.7)
 	if err != nil {
+		fmt.Printf("❌ OpenRouter AI call error: %v\n", err)
 		return SEOEnhancement{}, fmt.Errorf("OpenRouter AI call failed: %v", err)
+	}
+
+	// Log raw AI response for debugging
+	fmt.Printf("🤖 Raw AI Response (first 500 chars): %s\n", response[:min(500, len(response))])
+
+	// Try to clean up the response if it has markdown code blocks
+	cleanedResponse := response
+	if strings.HasPrefix(response, "```json") {
+		cleanedResponse = strings.TrimPrefix(response, "```json")
+		cleanedResponse = strings.TrimSuffix(cleanedResponse, "```")
+		cleanedResponse = strings.TrimSpace(cleanedResponse)
+	} else if strings.HasPrefix(response, "```") {
+		cleanedResponse = strings.TrimPrefix(response, "```")
+		cleanedResponse = strings.TrimSuffix(cleanedResponse, "```")
+		cleanedResponse = strings.TrimSpace(cleanedResponse)
 	}
 
 	// Parse AI response
 	var enhancement SEOEnhancement
-	if err := json.Unmarshal([]byte(response), &enhancement); err != nil {
+	if err := json.Unmarshal([]byte(cleanedResponse), &enhancement); err != nil {
+		fmt.Printf("❌ JSON Parse Error: %v\n", err)
+		fmt.Printf("❌ Tried to parse: %s\n", cleanedResponse[:min(200, len(cleanedResponse))])
 		return SEOEnhancement{}, fmt.Errorf("failed to parse AI response: %v", err)
 	}
 
+	fmt.Printf("✅ Successfully parsed AI response - Title: %s\n", enhancement.SEOTitle)
 	return enhancement, nil
 }
 
