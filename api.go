@@ -5987,7 +5987,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		optimizer.GET("/history", func(c *gin.Context) {
 			// Get query parameters
 			page := 1
-			limit := 20
+			if p := c.Query("page"); p != "" {
+				if pageNum, err := strconv.Atoi(p); err == nil && pageNum > 0 {
+					page = pageNum
+				}
+			}
+
+			limit := 50
+			if l := c.Query("limit"); l != "" {
+				if limitNum, err := strconv.Atoi(l); err == nil && limitNum > 0 {
+					limit = limitNum
+				}
+			}
+
 			productIDFilter := c.Query("product_id")
 			typeFilter := c.Query("type")
 			statusFilter := c.Query("status")
