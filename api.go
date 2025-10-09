@@ -871,7 +871,12 @@ func generateInstagramCSV(products []map[string]interface{}) string {
 // OpenRouter AI Configuration
 const (
 	OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
-	OPENROUTER_MODEL    = "meta-llama/llama-3.3-70b-instruct:free" // Best free model for e-commerce
+	// Free model (rate limited): "meta-llama/llama-3.3-70b-instruct:free"
+	// Paid models (recommended for production):
+	// - "anthropic/claude-3.5-sonnet" - Best quality, ~$3 per 1M tokens
+	// - "openai/gpt-4o-mini" - Cheap and fast, ~$0.15 per 1M tokens
+	// - "google/gemini-flash-1.5" - Very cheap, ~$0.075 per 1M tokens
+	OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free" // Change this if rate limited
 )
 
 // OpenRouterRequest represents the request structure for OpenRouter API
@@ -905,11 +910,17 @@ func callOpenRouterAI(prompt string, maxTokens int, temperature float64) (string
 		return "", fmt.Errorf("OPENROUTER_API_KEY not configured")
 	}
 
+	// Get model from environment variable or use default
+	model := os.Getenv("OPENROUTER_MODEL")
+	if model == "" {
+		model = OPENROUTER_MODEL
+	}
+
 	// Log the API call for debugging
-	fmt.Printf("🤖 AI API Call: %s\n", prompt[:min(50, len(prompt))])
+	fmt.Printf("🤖 AI API Call (Model: %s): %s\n", model, prompt[:min(50, len(prompt))])
 
 	request := OpenRouterRequest{
-		Model:       OPENROUTER_MODEL,
+		Model:       model,
 		Messages:    []OpenRouterMessage{{Role: "user", Content: prompt}},
 		MaxTokens:   maxTokens,
 		Temperature: temperature,
