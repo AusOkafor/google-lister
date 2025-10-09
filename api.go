@@ -1614,8 +1614,8 @@ func calculateTitleImprovement(original, optimized string) map[string]interface{
 	}
 }
 
-// calculateSEOScore evaluates SEO score for titles
-func calculateSEOScore(title string) int {
+// calculateTitleScore evaluates SEO score for titles
+func calculateTitleScore(title string) int {
 	score := 0
 
 	// Length check (optimal: 50-60 characters)
@@ -4848,7 +4848,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					"original_title":  title,
 					"optimized_title": optimizedTitle,
 					"improvement":     calculateTitleImprovement(title, optimizedTitle),
-					"seo_score":       calculateSEOScore(optimizedTitle),
+					"seo_score":       calculateTitleScore(optimizedTitle),
 					"message":         "Title optimized successfully",
 				})
 			})
