@@ -22,6 +22,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rs/cors"
 	"github.com/supabase-community/supabase-go"
+
+	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
 // In-memory storage for connectors (for demo purposes)
