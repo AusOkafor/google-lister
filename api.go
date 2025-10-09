@@ -1376,7 +1376,7 @@ func suggestProductCategory(title, description, brand, currentCategory string) [
 
 // suggestCategoryWithAI uses OpenRouter AI for category suggestions
 func suggestCategoryWithAI(title, description, brand, currentCategory string) ([]map[string]interface{}, error) {
-	prompt := fmt.Sprintf(`You are an expert e-commerce product categorization specialist. Analyze this product and suggest the most appropriate categories.
+	prompt := fmt.Sprintf(`You are an expert e-commerce product categorization specialist. Analyze this product and suggest the most appropriate Google Shopping-style hierarchical categories.
 
 Product: "%s"
 Description: "%s"
@@ -1385,17 +1385,18 @@ Current Category: "%s"
 
 Provide 3 category suggestions in this exact JSON format:
 [
-  {"category": "Category Name", "confidence": 0.95, "reason": "Brief explanation"},
-  {"category": "Alternative Category", "confidence": 0.85, "reason": "Brief explanation"},
-  {"category": "Related Category", "confidence": 0.75, "reason": "Brief explanation"}
+  {"category": "Apparel & Accessories > Clothing > Outerwear > Jackets & Coats", "confidence": 95, "reason": "Product is clearly outerwear"},
+  {"category": "Sporting Goods > Outdoor Recreation > Outdoor Clothing", "confidence": 85, "reason": "Suitable for outdoor activities"},
+  {"category": "Apparel & Accessories > Clothing > Activewear", "confidence": 75, "reason": "Can be used for sports"}
 ]
 
-Focus on:
-- E-commerce standard categories
-- Fashion/retail industry standards
-- SEO-friendly category names
-- Specific, not generic categories
-- High confidence scores for best matches
+IMPORTANT REQUIREMENTS:
+- Use hierarchical categories with " > " separators (e.g., "Parent > Child > Grandchild")
+- Use Google Shopping / Google Merchant Center category format
+- Confidence as WHOLE NUMBERS 0-100 (not decimals like 0.95)
+- Categories should be specific and follow e-commerce standards
+- Focus on the most accurate category paths
+- Common category prefixes: "Apparel & Accessories", "Electronics", "Home & Garden", "Sporting Goods", "Health & Beauty", "Toys & Games"
 
 Return ONLY the JSON array, no other text:`, title, description, brand, currentCategory)
 
