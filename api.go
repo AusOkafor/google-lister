@@ -5494,9 +5494,20 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			)
 
 			if err != nil {
-				// Fallback to simple optimization
-				optimizedTitle = fmt.Sprintf("%s | Premium Quality | Fast Shipping", originalTitle)
+				// Log the error for debugging
+				fmt.Printf("❌ AI Title Optimization failed: %v\n", err)
+				fmt.Printf("   Product: %s, Keywords: %s\n", originalTitle, keywords)
+
+				// Return error instead of fallback so user knows AI failed
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error":   "AI title optimization failed",
+					"details": err.Error(),
+					"message": "The AI service is temporarily unavailable. Please try again.",
+				})
+				return
 			}
+
+			fmt.Printf("✅ AI Title Generated: '%s' (original: '%s')\n", optimizedTitle, originalTitle)
 
 			// Calculate improvement score
 			score := 85
@@ -5593,19 +5604,20 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			)
 
 			if err != nil {
-				// Fallback description
-				optimizedDesc = fmt.Sprintf(`Discover the exceptional quality of %s. 
+				// Log the error for debugging
+				fmt.Printf("❌ AI Description Enhancement failed: %v\n", err)
+				fmt.Printf("   Product: %s, Style: %s, Length: %s\n", title.String, style, length)
 
-✨ Key Features:
-• Premium materials and craftsmanship
-• Designed for durability and style
-• Perfect for everyday use
-• Trusted by thousands of satisfied customers
-
-This %s combines functionality with elegance, making it an essential addition to your collection. Experience the difference that quality makes.
-
-Order now and enjoy fast, reliable shipping!`, title.String, brand.String)
+				// Return error instead of fallback so user knows AI failed
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error":   "AI description enhancement failed",
+					"details": err.Error(),
+					"message": "The AI service is temporarily unavailable. Please try again.",
+				})
+				return
 			}
+
+			fmt.Printf("✅ AI Description Generated: %d chars (original: %d chars)\n", len(optimizedDesc), len(originalDesc))
 
 			score := 88
 			if len(optimizedDesc) > len(originalDesc)*2 {
@@ -5676,21 +5688,35 @@ Order now and enjoy fast, reliable shipping!`, title.String, brand.String)
 				category.String,
 			)
 
-			if err != nil || len(suggestions) == 0 {
-				// Fallback suggestions
-				suggestions = []map[string]interface{}{
-					{
-						"category":   "Electronics > Computers & Accessories",
-						"confidence": 95,
-						"channels":   []string{"Google Shopping", "Facebook", "Instagram"},
-					},
-					{
-						"category":   "Electronics > Consumer Electronics",
-						"confidence": 85,
-						"channels":   []string{"Google Shopping", "Amazon"},
-					},
-				}
+			if err != nil {
+				// Log the error for debugging
+				fmt.Printf("❌ AI Category Suggestion failed: %v\n", err)
+				fmt.Printf("   Product: %s, Current Category: %s\n", title.String, category.String)
+
+				// Return error instead of fallback so user knows AI failed
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error":   "AI category suggestion failed",
+					"details": err.Error(),
+					"message": "The AI service is temporarily unavailable. Please try again.",
+				})
+				return
 			}
+
+			if len(suggestions) == 0 {
+				// No suggestions returned
+				fmt.Printf("⚠️ AI returned no category suggestions for: %s\n", title.String)
+				c.JSON(http.StatusOK, gin.H{
+					"optimization_id":  historyID,
+					"product_id":       productID,
+					"current_category": category.String,
+					"suggestions":      []map[string]interface{}{},
+					"cost":             0.001,
+					"message":          "No category suggestions available for this product.",
+				})
+				return
+			}
+
+			fmt.Printf("✅ AI Category Suggestions: %d suggestions generated\n", len(suggestions))
 
 			c.JSON(http.StatusOK, gin.H{
 				"optimization_id":  historyID,
