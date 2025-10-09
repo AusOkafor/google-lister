@@ -5468,7 +5468,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 			// Generate optimized title using REAL AI
 			originalTitle := title.String
-			
+
 			keywords := ""
 			if k, ok := req["keywords"].([]interface{}); ok && len(k) > 0 {
 				keywordStrs := make([]string, len(k))
@@ -5845,11 +5845,73 @@ Order now and enjoy fast, reliable shipping!`, title.String, brand.String)
 		optimizer.POST("/:id/apply", func(c *gin.Context) {
 			optimizationID := c.Param("id")
 
+			// For now, optimization_id is just a timestamp
+			// In a real implementation, we'd store optimizations in a database table
+			// and retrieve them here. Since we're not doing that yet, we need
+			// to get the optimized value from the request body
+
+			var req map[string]interface{}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+				return
+			}
+
+			productID, ok := req["product_id"].(string)
+			if !ok || productID == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "product_id is required"})
+				return
+			}
+
+			optimizedValue, ok := req["optimized_value"].(string)
+			if !ok || optimizedValue == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "optimized_value is required"})
+				return
+			}
+
+			optimizationType, ok := req["optimization_type"].(string)
+			if !ok || optimizationType == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "optimization_type is required"})
+				return
+			}
+
+			// Update the product in the database based on optimization type
+			var updateQuery string
+			switch optimizationType {
+			case "title":
+				updateQuery = "UPDATE products SET title = $1, updated_at = NOW() WHERE id = $2"
+			case "description":
+				updateQuery = "UPDATE products SET description = $1, updated_at = NOW() WHERE id = $2"
+			case "category":
+				updateQuery = "UPDATE products SET category = $1, updated_at = NOW() WHERE id = $2"
+			default:
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid optimization type"})
+				return
+			}
+
+			// Execute the update
+			result, err := db.Exec(updateQuery, optimizedValue, productID)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error":   "Failed to update product",
+					"details": err.Error(),
+				})
+				return
+			}
+
+			rowsAffected, _ := result.RowsAffected()
+			if rowsAffected == 0 {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+				return
+			}
+
 			c.JSON(http.StatusOK, gin.H{
-				"message": "Optimization applied successfully",
+				"message": "Optimization applied successfully - product updated in database",
 				"data": gin.H{
-					"id":     optimizationID,
-					"status": "applied",
+					"id":                optimizationID,
+					"status":            "applied",
+					"product_id":        productID,
+					"optimization_type": optimizationType,
+					"updated_value":     optimizedValue,
 				},
 			})
 		})
