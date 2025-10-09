@@ -42,6 +42,7 @@ func New(cfg *config.Config, logger *logger.Logger, db *database.Database) *Serv
 	channelHandler := handlers.NewChannelHandler(db.DB, logger)
 	issueHandler := handlers.NewIssueHandler(db.DB, logger)
 	shopifyHandler := handlers.NewShopifyHandler(db.DB, logger, cfg)
+	optimizerHandler := handlers.NewOptimizerHandler(db.DB, logger, cfg)
 
 	// Routes
 	v1 := router.Group("/api/v1")
@@ -93,6 +94,22 @@ func New(cfg *config.Config, logger *logger.Logger, db *database.Database) *Serv
 			shopify.GET("/callback", shopifyHandler.Callback)
 			shopify.POST("/:id/sync", shopifyHandler.SyncProducts)
 			shopify.POST("/webhook", shopifyHandler.Webhook)
+		}
+
+		// AI Optimizer
+		optimizer := v1.Group("/optimizer")
+		{
+			optimizer.POST("/title", optimizerHandler.OptimizeTitle)
+			optimizer.POST("/description", optimizerHandler.OptimizeDescription)
+			optimizer.POST("/category", optimizerHandler.SuggestCategory)
+			optimizer.POST("/image", optimizerHandler.AnalyzeImages)
+			optimizer.POST("/bulk", optimizerHandler.BulkOptimize)
+			optimizer.GET("/history", optimizerHandler.GetHistory)
+			optimizer.GET("/analytics", optimizerHandler.GetAnalytics)
+			optimizer.GET("/settings", optimizerHandler.GetSettings)
+			optimizer.PUT("/settings", optimizerHandler.UpdateSettings)
+			optimizer.GET("/credits", optimizerHandler.GetCredits)
+			optimizer.POST("/:id/apply", optimizerHandler.ApplyOptimization)
 		}
 	}
 
