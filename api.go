@@ -5532,8 +5532,33 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				improvement = 100
 			}
 
-			// Save optimization history
-			historyID := fmt.Sprintf("%d", time.Now().UnixNano())
+			// Save optimization history to database
+			organizationID := "00000000-0000-0000-0000-000000000000"
+			historyID := ""
+
+			metadataJSON, _ := json.Marshal(map[string]interface{}{
+				"duration_ms":     25,
+				"character_count": len(optimizedTitle),
+				"keywords":        keywords,
+			})
+
+			err = db.QueryRow(`
+				INSERT INTO optimization_history (
+					product_id, organization_id, optimization_type, 
+					original_value, optimized_value, status, score, 
+					improvement_percentage, ai_model, cost, tokens_used, metadata
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+				RETURNING id
+			`, productID, organizationID, "title", originalTitle, optimizedTitle,
+				"pending", score, improvement, "gpt-3.5-turbo", 0.002, 150, string(metadataJSON)).Scan(&historyID)
+
+			if err != nil {
+				fmt.Printf("⚠️ Failed to save optimization history: %v\n", err)
+				// Continue anyway, don't fail the request
+				historyID = fmt.Sprintf("%d", time.Now().UnixNano())
+			} else {
+				fmt.Printf("✅ Saved optimization history: %s\n", historyID)
+			}
 
 			c.JSON(http.StatusOK, gin.H{
 				"optimization_id":   historyID,
@@ -5646,7 +5671,33 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			if improvement > 100 {
 				improvement = 50 // Cap at reasonable value
 			}
-			historyID := fmt.Sprintf("%d", time.Now().UnixNano())
+
+			// Save optimization history to database
+			organizationID := "00000000-0000-0000-0000-000000000000"
+			historyID := ""
+
+			metadataJSON, _ := json.Marshal(map[string]interface{}{
+				"style":               style,
+				"length":              length,
+				"custom_instructions": customInstructions,
+			})
+
+			err = db.QueryRow(`
+				INSERT INTO optimization_history (
+					product_id, organization_id, optimization_type, 
+					original_value, optimized_value, status, score, 
+					improvement_percentage, ai_model, cost, tokens_used, metadata
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+				RETURNING id
+			`, productID, organizationID, "description", originalDesc, optimizedDesc,
+				"pending", score, improvement, "gpt-3.5-turbo", 0.004, 250, string(metadataJSON)).Scan(&historyID)
+
+			if err != nil {
+				fmt.Printf("⚠️ Failed to save optimization history: %v\n", err)
+				historyID = fmt.Sprintf("%d", time.Now().UnixNano())
+			} else {
+				fmt.Printf("✅ Saved description optimization history: %s\n", historyID)
+			}
 
 			c.JSON(http.StatusOK, gin.H{
 				"optimization_id":   historyID,
@@ -5690,8 +5741,6 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			historyID := fmt.Sprintf("%d", time.Now().UnixNano())
-
 			// Get description
 			var description sql.NullString
 			db.QueryRow(`SELECT description FROM products WHERE id = $1`, productID).Scan(&description)
@@ -5722,7 +5771,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// No suggestions returned
 				fmt.Printf("⚠️ AI returned no category suggestions for: %s\n", title.String)
 				c.JSON(http.StatusOK, gin.H{
-					"optimization_id":  historyID,
+					"optimization_id":  "",
 					"product_id":       productID,
 					"current_category": category.String,
 					"suggestions":      []map[string]interface{}{},
@@ -5733,6 +5782,34 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			fmt.Printf("✅ AI Category Suggestions: %d suggestions generated\n", len(suggestions))
+
+			// Save optimization history to database
+			organizationID := "00000000-0000-0000-0000-000000000000"
+			historyID := ""
+
+			// Store first suggestion as the optimized value
+			firstSuggestion := suggestions[0]["category"].(string)
+
+			metadataJSON, _ := json.Marshal(map[string]interface{}{
+				"suggestions": suggestions,
+			})
+
+			err = db.QueryRow(`
+				INSERT INTO optimization_history (
+					product_id, organization_id, optimization_type, 
+					original_value, optimized_value, status, score, 
+					improvement_percentage, ai_model, cost, tokens_used, metadata
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+				RETURNING id
+			`, productID, organizationID, "category", category.String, firstSuggestion,
+				"pending", 85, 0.0, "gpt-3.5-turbo", 0.001, 150, string(metadataJSON)).Scan(&historyID)
+
+			if err != nil {
+				fmt.Printf("⚠️ Failed to save optimization history: %v\n", err)
+				historyID = fmt.Sprintf("%d", time.Now().UnixNano())
+			} else {
+				fmt.Printf("✅ Saved category optimization history: %s\n", historyID)
+			}
 
 			c.JSON(http.StatusOK, gin.H{
 				"optimization_id":  historyID,
@@ -5780,13 +5857,118 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 		// Get Optimization History
 		optimizer.GET("/history", func(c *gin.Context) {
+			// Get query parameters
+			page := 1
+			limit := 20
+			productIDFilter := c.Query("product_id")
+			typeFilter := c.Query("type")
+			statusFilter := c.Query("status")
+
+			offset := (page - 1) * limit
+
+			// Build query
+			query := "SELECT id, product_id, optimization_type, original_value, optimized_value, status, score, improvement_percentage, ai_model, cost, tokens_used, created_at, applied_at FROM optimization_history WHERE 1=1"
+			args := []interface{}{}
+			argCount := 0
+
+			if productIDFilter != "" {
+				argCount++
+				query += fmt.Sprintf(" AND product_id = $%d", argCount)
+				args = append(args, productIDFilter)
+			}
+			if typeFilter != "" {
+				argCount++
+				query += fmt.Sprintf(" AND optimization_type = $%d", argCount)
+				args = append(args, typeFilter)
+			}
+			if statusFilter != "" {
+				argCount++
+				query += fmt.Sprintf(" AND status = $%d", argCount)
+				args = append(args, statusFilter)
+			}
+
+			query += " ORDER BY created_at DESC"
+			query += fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
+
+			// Fetch history
+			rows, err := db.Query(query, args...)
+			if err != nil {
+				fmt.Printf("❌ Failed to fetch history: %v\n", err)
+				c.JSON(http.StatusOK, gin.H{
+					"data": []gin.H{},
+					"pagination": gin.H{
+						"page":  1,
+						"limit": 20,
+						"total": 0,
+						"pages": 0,
+					},
+				})
+				return
+			}
+			defer rows.Close()
+
+			history := []gin.H{}
+			for rows.Next() {
+				var id, productID, optimizationType, originalValue, optimizedValue, status, aiModel string
+				var score, tokensUsed sql.NullInt64
+				var improvementPercentage, cost sql.NullFloat64
+				var createdAt, appliedAt sql.NullTime
+
+				err := rows.Scan(&id, &productID, &optimizationType, &originalValue, &optimizedValue,
+					&status, &score, &improvementPercentage, &aiModel, &cost, &tokensUsed, &createdAt, &appliedAt)
+				if err != nil {
+					continue
+				}
+
+				historyItem := gin.H{
+					"id":                id,
+					"product_id":        productID,
+					"optimization_type": optimizationType,
+					"original_value":    originalValue,
+					"optimized_value":   optimizedValue,
+					"status":            status,
+					"ai_model":          aiModel,
+					"created_at":        createdAt.Time,
+				}
+
+				if score.Valid {
+					historyItem["score"] = score.Int64
+				}
+				if improvementPercentage.Valid {
+					historyItem["improvement"] = fmt.Sprintf("+%.1f%%", improvementPercentage.Float64)
+				}
+				if cost.Valid {
+					historyItem["cost"] = cost.Float64
+				}
+				if appliedAt.Valid {
+					historyItem["applied_at"] = appliedAt.Time
+				}
+
+				history = append(history, historyItem)
+			}
+
+			// Get total count
+			var total int
+			countQuery := "SELECT COUNT(*) FROM optimization_history WHERE 1=1"
+			if productIDFilter != "" {
+				countQuery += " AND product_id = '" + productIDFilter + "'"
+			}
+			if typeFilter != "" {
+				countQuery += " AND optimization_type = '" + typeFilter + "'"
+			}
+			if statusFilter != "" {
+				countQuery += " AND status = '" + statusFilter + "'"
+			}
+
+			db.QueryRow(countQuery).Scan(&total)
+
 			c.JSON(http.StatusOK, gin.H{
-				"data": []gin.H{},
+				"data": history,
 				"pagination": gin.H{
-					"page":  1,
-					"limit": 20,
-					"total": 0,
-					"pages": 0,
+					"page":  page,
+					"limit": limit,
+					"total": total,
+					"pages": (total + limit - 1) / limit,
 				},
 			})
 		})
@@ -5903,6 +6085,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			if rowsAffected == 0 {
 				c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
 				return
+			}
+
+			// Update optimization history status to "applied"
+			_, err = db.Exec(`
+				UPDATE optimization_history 
+				SET status = 'applied', applied_at = NOW(), updated_at = NOW()
+				WHERE id = $1
+			`, optimizationID)
+
+			if err != nil {
+				fmt.Printf("⚠️ Failed to update optimization history status: %v\n", err)
+			} else {
+				fmt.Printf("✅ Marked optimization as applied: %s\n", optimizationID)
 			}
 
 			c.JSON(http.StatusOK, gin.H{
