@@ -301,17 +301,17 @@ Provide a JSON response with the following structure:
   "keywords": ["keyword1", "keyword2", "keyword3"],
   "meta_keywords": "keyword1, keyword2, keyword3",
   "alt_text": "Descriptive alt text for product images",
-  "schema_markup": "JSON-LD structured data for the product"
+  "schema_markup": "{\"@context\":\"https://schema.org\",\"@type\":\"Product\",\"name\":\"Product Name\",\"description\":\"Description\",\"brand\":{\"@type\":\"Brand\",\"name\":\"Brand\"}}"
 }
 
-Requirements:
+CRITICAL REQUIREMENTS:
 - SEO title: Under 60 characters, keyword-rich, compelling, written %s
 - SEO description: Under 160 characters, persuasive, includes CTA, written %s for %s
 - Keywords: 5-10 relevant keywords from title, category, brand
 - Alt text: Descriptive, includes product name and key features
-- Schema markup: Valid JSON-LD for Product type with name, description, brand, category
+- Schema markup: MUST be a JSON STRING (escaped JSON), NOT a JSON object. See example above.
 
-Return ONLY the JSON response, no explanations.
+Return ONLY the JSON response, no markdown code blocks, no explanations.
 `, langInstruction, string(productJSON), langInstruction, audienceInstruction, levelInstruction, optimizationFocus, customSection, langInstruction, langInstruction, audienceInstruction)
 
 	// Use the existing OpenRouter AI function
@@ -336,16 +336,69 @@ Return ONLY the JSON response, no explanations.
 		cleanedResponse = strings.TrimSpace(cleanedResponse)
 	}
 
-	// Parse AI response
-	var enhancement SEOEnhancement
-	if err := json.Unmarshal([]byte(cleanedResponse), &enhancement); err != nil {
+	// Parse AI response into a flexible map first
+	var rawResponse map[string]interface{}
+	if err := json.Unmarshal([]byte(cleanedResponse), &rawResponse); err != nil {
 		fmt.Printf("❌ JSON Parse Error: %v\n", err)
 		fmt.Printf("❌ Tried to parse: %s\n", cleanedResponse[:min(200, len(cleanedResponse))])
 		return SEOEnhancement{}, fmt.Errorf("failed to parse AI response: %v", err)
 	}
 
+	// Handle schema_markup - convert object to string if needed
+	var schemaMarkupStr string
+	if schemaMarkup, ok := rawResponse["schema_markup"]; ok {
+		switch v := schemaMarkup.(type) {
+		case string:
+			schemaMarkupStr = v
+		case map[string]interface{}:
+			// AI returned object instead of string, stringify it
+			if schemaBytes, err := json.Marshal(v); err == nil {
+				schemaMarkupStr = string(schemaBytes)
+				fmt.Printf("✅ Converted schema_markup object to string\n")
+			}
+		default:
+			schemaMarkupStr = ""
+		}
+	}
+
+	// Build the SEOEnhancement struct
+	enhancement := SEOEnhancement{
+		SEOTitle:       getString(rawResponse, "seo_title"),
+		SEODescription: getString(rawResponse, "seo_description"),
+		Keywords:       getStringArray(rawResponse, "keywords"),
+		MetaKeywords:   getString(rawResponse, "meta_keywords"),
+		AltText:        getString(rawResponse, "alt_text"),
+		SchemaMarkup:   schemaMarkupStr,
+	}
+
 	fmt.Printf("✅ Successfully parsed AI response - Title: %s\n", enhancement.SEOTitle)
 	return enhancement, nil
+}
+
+// Helper function to safely get string from map
+func getString(m map[string]interface{}, key string) string {
+	if val, ok := m[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
+// Helper function to safely get string array from map
+func getStringArray(m map[string]interface{}, key string) []string {
+	if val, ok := m[key]; ok {
+		if arr, ok := val.([]interface{}); ok {
+			result := make([]string, 0, len(arr))
+			for _, item := range arr {
+				if str, ok := item.(string); ok {
+					result = append(result, str)
+				}
+			}
+			return result
+		}
+	}
+	return []string{}
 }
 
 // createFallbackSEO - Create fallback SEO when AI fails
