@@ -4153,6 +4153,388 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		// Feed Management System
 		feeds := api.Group("/feeds")
 		{
+			// Get All Feeds
+			feeds.GET("/", func(c *gin.Context) {
+				// Get query parameters
+				page := c.DefaultQuery("page", "1")
+				limit := c.DefaultQuery("limit", "50")
+				status := c.Query("status")
+
+				pageInt, _ := strconv.Atoi(page)
+				limitInt, _ := strconv.Atoi(limit)
+				offset := (pageInt - 1) * limitInt
+
+				// Build query
+				query := `
+					SELECT 
+						id, name, channel, format, status, products_count, 
+						last_generated, created_at, updated_at, settings
+					FROM product_feeds 
+					WHERE organization_id = $1
+				`
+				args := []interface{}{"00000000-0000-0000-0000-000000000000"}
+
+				if status != "" {
+					query += " AND status = $" + strconv.Itoa(len(args)+1)
+					args = append(args, status)
+				}
+
+				query += " ORDER BY created_at DESC LIMIT $" + strconv.Itoa(len(args)+1) + " OFFSET $" + strconv.Itoa(len(args)+2)
+				args = append(args, limitInt, offset)
+
+				rows, err := db.Query(query, args...)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch feeds"})
+					return
+				}
+				defer rows.Close()
+
+				var feeds []map[string]interface{}
+				for rows.Next() {
+					var id, name, channel, format, status, productsCount, lastGenerated, createdAt, updatedAt string
+					var settings sql.NullString
+
+					err := rows.Scan(&id, &name, &channel, &format, &status, &productsCount, &lastGenerated, &createdAt, &updatedAt, &settings)
+					if err != nil {
+						continue
+					}
+
+					feeds = append(feeds, map[string]interface{}{
+						"id":            id,
+						"name":          name,
+						"channel":       channel,
+						"format":        format,
+						"status":        status,
+						"productsCount": productsCount,
+						"lastGenerated": lastGenerated,
+						"createdAt":     createdAt,
+						"updatedAt":     updatedAt,
+						"settings":      settings.String,
+					})
+				}
+
+				// Get total count
+				countQuery := "SELECT COUNT(*) FROM product_feeds WHERE organization_id = $1"
+				countArgs := []interface{}{"00000000-0000-0000-0000-000000000000"}
+
+				if status != "" {
+					countQuery += " AND status = $2"
+					countArgs = append(countArgs, status)
+				}
+
+				var total int
+				db.QueryRow(countQuery, countArgs...).Scan(&total)
+
+				c.JSON(http.StatusOK, gin.H{
+					"data": feeds,
+					"pagination": gin.H{
+						"page":  pageInt,
+						"limit": limitInt,
+						"total": total,
+					},
+				})
+			})
+
+			// Create Feed
+			feeds.POST("/", func(c *gin.Context) {
+				var req map[string]interface{}
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+					return
+				}
+
+				name, _ := req["name"].(string)
+				channel, _ := req["channel"].(string)
+				format, _ := req["format"].(string)
+				settings := "{}"
+				if s, ok := req["settings"].(string); ok {
+					settings = s
+				}
+
+				if name == "" || channel == "" || format == "" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Name, channel, and format are required"})
+					return
+				}
+
+				var feedID string
+				err := db.QueryRow(`
+					INSERT INTO product_feeds (
+						organization_id, name, channel, format, status, 
+						products_count, settings, created_at, updated_at
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+					RETURNING id
+				`, "00000000-0000-0000-0000-000000000000", name, channel, format, "inactive", 0, settings).Scan(&feedID)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create feed"})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data": gin.H{
+						"id":     feedID,
+						"name":   name,
+						"status": "created",
+					},
+					"message": "Feed created successfully",
+				})
+			})
+
+			// Get Feed by ID
+			feeds.GET("/:id", func(c *gin.Context) {
+				feedID := c.Param("id")
+
+				var id, name, channel, format, status, productsCount, lastGenerated, createdAt, updatedAt string
+				var settings sql.NullString
+
+				err := db.QueryRow(`
+					SELECT id, name, channel, format, status, products_count, 
+						   last_generated, created_at, updated_at, settings
+					FROM product_feeds 
+					WHERE id = $1 AND organization_id = $2
+				`, feedID, "00000000-0000-0000-0000-000000000000").Scan(
+					&id, &name, &channel, &format, &status, &productsCount,
+					&lastGenerated, &createdAt, &updatedAt, &settings)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Feed not found"})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data": gin.H{
+						"id":            id,
+						"name":          name,
+						"channel":       channel,
+						"format":        format,
+						"status":        status,
+						"productsCount": productsCount,
+						"lastGenerated": lastGenerated,
+						"createdAt":     createdAt,
+						"updatedAt":     updatedAt,
+						"settings":      settings.String,
+					},
+				})
+			})
+
+			// Update Feed
+			feeds.PUT("/:id", func(c *gin.Context) {
+				feedID := c.Param("id")
+				var req map[string]interface{}
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+					return
+				}
+
+				// Build update query dynamically
+				updates := []string{}
+				args := []interface{}{}
+				argIndex := 1
+
+				if name, ok := req["name"].(string); ok && name != "" {
+					updates = append(updates, fmt.Sprintf("name = $%d", argIndex))
+					args = append(args, name)
+					argIndex++
+				}
+				if status, ok := req["status"].(string); ok && status != "" {
+					updates = append(updates, fmt.Sprintf("status = $%d", argIndex))
+					args = append(args, status)
+					argIndex++
+				}
+				if settings, ok := req["settings"].(string); ok {
+					updates = append(updates, fmt.Sprintf("settings = $%d", argIndex))
+					args = append(args, settings)
+					argIndex++
+				}
+
+				if len(updates) == 0 {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "No valid fields to update"})
+					return
+				}
+
+				updates = append(updates, fmt.Sprintf("updated_at = NOW()"))
+				args = append(args, feedID, "00000000-0000-0000-0000-000000000000")
+
+				query := fmt.Sprintf(`
+					UPDATE product_feeds 
+					SET %s 
+					WHERE id = $%d AND organization_id = $%d
+				`, strings.Join(updates, ", "), argIndex, argIndex+1)
+
+				result, err := db.Exec(query, args...)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update feed"})
+					return
+				}
+
+				rowsAffected, _ := result.RowsAffected()
+				if rowsAffected == 0 {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Feed not found"})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"message": "Feed updated successfully",
+				})
+			})
+
+			// Delete Feed
+			feeds.DELETE("/:id", func(c *gin.Context) {
+				feedID := c.Param("id")
+
+				result, err := db.Exec(`
+					DELETE FROM product_feeds 
+					WHERE id = $1 AND organization_id = $2
+				`, feedID, "00000000-0000-0000-0000-000000000000")
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete feed"})
+					return
+				}
+
+				rowsAffected, _ := result.RowsAffected()
+				if rowsAffected == 0 {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Feed not found"})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"message": "Feed deleted successfully",
+				})
+			})
+
+			// Regenerate Feed
+			feeds.POST("/:id/regenerate", func(c *gin.Context) {
+				feedID := c.Param("id")
+
+				// Get feed details
+				var name, channel, format, status string
+				err := db.QueryRow(`
+					SELECT name, channel, format, status
+					FROM product_feeds 
+					WHERE id = $1 AND organization_id = $2
+				`, feedID, "00000000-0000-0000-0000-000000000000").Scan(&name, &channel, &format, &status)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Feed not found"})
+					return
+				}
+
+				// Update status to generating
+				db.Exec(`UPDATE product_feeds SET status = 'generating', updated_at = NOW() WHERE id = $1`, feedID)
+
+				// Simulate generation process (in real implementation, this would be async)
+				go func() {
+					time.Sleep(2 * time.Second) // Simulate processing time
+
+					// Update feed with generated data
+					db.Exec(`
+						UPDATE product_feeds 
+						SET status = 'active', products_count = (
+							SELECT COUNT(*) FROM products WHERE status = 'ACTIVE'
+						), last_generated = NOW(), updated_at = NOW() 
+						WHERE id = $1
+					`, feedID)
+				}()
+
+				c.JSON(http.StatusOK, gin.H{
+					"message": "Feed regeneration started",
+					"status":  "generating",
+				})
+			})
+
+			// Download Feed
+			feeds.GET("/:id/download", func(c *gin.Context) {
+				feedID := c.Param("id")
+				format := c.DefaultQuery("format", "xml")
+
+				// Get feed details
+				var name, channel, feedFormat string
+				err := db.QueryRow(`
+					SELECT name, channel, format
+					FROM product_feeds 
+					WHERE id = $1 AND organization_id = $2
+				`, feedID, "00000000-0000-0000-0000-000000000000").Scan(&name, &channel, &feedFormat)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Feed not found"})
+					return
+				}
+
+				// Get products for feed
+				rows, err := db.Query(`
+					SELECT id, external_id, title, description, price, currency, sku, brand, category, images
+					FROM products 
+					WHERE status = 'ACTIVE' AND price > 0
+					ORDER BY created_at DESC 
+					LIMIT 1000
+				`)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
+					return
+				}
+				defer rows.Close()
+
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, brand, category, currency, images string
+					var sku sql.NullString
+					var price sql.NullFloat64
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category, &images)
+					if err != nil {
+						continue
+					}
+
+					// Parse images
+					var imageList []string
+					if images != "" {
+						cleanImages := strings.Trim(images, "{}")
+						if cleanImages != "" {
+							imageList = strings.Split(cleanImages, ",")
+						}
+					}
+
+					products = append(products, map[string]interface{}{
+						"id":          externalID,
+						"title":       title,
+						"description": description,
+						"price":       fmt.Sprintf("%.2f %s", price.Float64, currency),
+						"sku":         sku.String,
+						"brand":       brand,
+						"category":    category,
+						"image_link": func() string {
+							if len(imageList) > 0 {
+								return imageList[0]
+							}
+							return ""
+						}(),
+					})
+				}
+
+				// Generate feed content based on channel and format
+				if channel == "Google Shopping" && format == "xml" {
+					xmlContent := generateGoogleShoppingXML(products)
+					c.Header("Content-Type", "application/xml")
+					c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.xml\"", name))
+					c.String(http.StatusOK, xmlContent)
+				} else if channel == "Facebook" && format == "csv" {
+					csvContent := generateFacebookCSV(products)
+					c.Header("Content-Type", "text/csv")
+					c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.csv\"", name))
+					c.String(http.StatusOK, csvContent)
+				} else {
+					// Default JSON response
+					c.Header("Content-Type", "application/json")
+					c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.json\"", name))
+					c.JSON(http.StatusOK, gin.H{
+						"feed_type": strings.ToLower(strings.ReplaceAll(channel, " ", "_")),
+						"products":  products,
+						"total":     len(products),
+					})
+				}
+			})
+
 			// Google Shopping Feed
 			feeds.GET("/google-shopping", func(c *gin.Context) {
 				// Get query parameters
@@ -4447,6 +4829,323 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				c.JSON(http.StatusOK, gin.H{
 					"data":    stats,
 					"message": "Feed statistics retrieved successfully",
+				})
+			})
+
+			// Feed Templates
+			feeds.GET("/templates", func(c *gin.Context) {
+				channel := c.Query("channel")
+				organizationID := "00000000-0000-0000-0000-000000000000"
+
+				query := `
+					SELECT id, name, description, channel, format, field_mapping, 
+						   filters, transformations, is_system_template, is_active
+					FROM feed_templates 
+					WHERE organization_id = $1 OR is_system_template = TRUE
+				`
+				args := []interface{}{organizationID}
+
+				if channel != "" {
+					query += " AND channel = $" + strconv.Itoa(len(args)+1)
+					args = append(args, channel)
+				}
+
+				query += " ORDER BY is_system_template DESC, name ASC"
+
+				rows, err := db.Query(query, args...)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch templates"})
+					return
+				}
+				defer rows.Close()
+
+				var templates []map[string]interface{}
+				for rows.Next() {
+					var id, name, description, channel, format, fieldMapping, filters, transformations string
+					var isSystemTemplate, isActive bool
+
+					err := rows.Scan(&id, &name, &description, &channel, &format, &fieldMapping, &filters, &transformations, &isSystemTemplate, &isActive)
+					if err != nil {
+						continue
+					}
+
+					templates = append(templates, map[string]interface{}{
+						"id":               id,
+						"name":             name,
+						"description":      description,
+						"channel":          channel,
+						"format":           format,
+						"fieldMapping":     fieldMapping,
+						"filters":          filters,
+						"transformations":  transformations,
+						"isSystemTemplate": isSystemTemplate,
+						"isActive":         isActive,
+					})
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data": templates,
+				})
+			})
+
+			// Feed History
+			feeds.GET("/:id/history", func(c *gin.Context) {
+				feedID := c.Param("id")
+				page := c.DefaultQuery("page", "1")
+				limit := c.DefaultQuery("limit", "20")
+
+				pageInt, _ := strconv.Atoi(page)
+				limitInt, _ := strconv.Atoi(limit)
+				offset := (pageInt - 1) * limitInt
+
+				rows, err := db.Query(`
+					SELECT id, status, products_processed, products_included, products_excluded,
+						   generation_time_ms, file_size_bytes, error_message, file_url, file_format,
+						   started_at, completed_at
+					FROM feed_generation_history 
+					WHERE feed_id = $1 AND organization_id = $2
+					ORDER BY started_at DESC 
+					LIMIT $3 OFFSET $4
+				`, feedID, "00000000-0000-0000-0000-000000000000", limitInt, offset)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch history"})
+					return
+				}
+				defer rows.Close()
+
+				var history []map[string]interface{}
+				for rows.Next() {
+					var id, status, productsProcessed, productsIncluded, productsExcluded, generationTimeMs, fileSizeBytes, errorMessage, fileURL, fileFormat, startedAt string
+					var completedAt sql.NullString
+
+					err := rows.Scan(&id, &status, &productsProcessed, &productsIncluded, &productsExcluded, &generationTimeMs, &fileSizeBytes, &errorMessage, &fileURL, &fileFormat, &startedAt, &completedAt)
+					if err != nil {
+						continue
+					}
+
+					history = append(history, map[string]interface{}{
+						"id":                id,
+						"status":            status,
+						"productsProcessed": productsProcessed,
+						"productsIncluded":  productsIncluded,
+						"productsExcluded":  productsExcluded,
+						"generationTimeMs":  generationTimeMs,
+						"fileSizeBytes":     fileSizeBytes,
+						"errorMessage":      errorMessage,
+						"fileURL":           fileURL,
+						"fileFormat":        fileFormat,
+						"startedAt":         startedAt,
+						"completedAt":       completedAt.String,
+					})
+				}
+
+				// Get total count
+				var total int
+				db.QueryRow(`
+					SELECT COUNT(*) FROM feed_generation_history 
+					WHERE feed_id = $1 AND organization_id = $2
+				`, feedID, "00000000-0000-0000-0000-000000000000").Scan(&total)
+
+				c.JSON(http.StatusOK, gin.H{
+					"data": history,
+					"pagination": gin.H{
+						"page":  pageInt,
+						"limit": limitInt,
+						"total": total,
+					},
+				})
+			})
+
+			// Feed Analytics
+			feeds.GET("/:id/analytics", func(c *gin.Context) {
+				feedID := c.Param("id")
+
+				// Get feed details
+				var feedName, channel, status string
+				var productsCount int
+				var lastGenerated sql.NullString
+
+				err := db.QueryRow(`
+					SELECT name, channel, status, products_count, last_generated
+					FROM product_feeds 
+					WHERE id = $1 AND organization_id = $2
+				`, feedID, "00000000-0000-0000-0000-000000000000").Scan(&feedName, &channel, &status, &productsCount, &lastGenerated)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Feed not found"})
+					return
+				}
+
+				// Get generation statistics
+				var totalGenerations, successfulGenerations, failedGenerations int
+				var avgGenerationTime, avgFileSize float64
+
+				db.QueryRow(`
+					SELECT 
+						COUNT(*),
+						COUNT(CASE WHEN status = 'completed' THEN 1 END),
+						COUNT(CASE WHEN status = 'failed' THEN 1 END),
+						AVG(generation_time_ms),
+						AVG(file_size_bytes)
+					FROM feed_generation_history 
+					WHERE feed_id = $1 AND organization_id = $2
+				`, feedID, "00000000-0000-0000-0000-000000000000").Scan(
+					&totalGenerations, &successfulGenerations, &failedGenerations, &avgGenerationTime, &avgFileSize)
+
+				// Get recent generation history (last 30 days)
+				rows, err := db.Query(`
+					SELECT DATE(started_at) as date, COUNT(*) as generations, 
+						   AVG(generation_time_ms) as avg_time, AVG(file_size_bytes) as avg_size
+					FROM feed_generation_history 
+					WHERE feed_id = $1 AND organization_id = $2 
+					  AND started_at >= NOW() - INTERVAL '30 days'
+					GROUP BY DATE(started_at)
+					ORDER BY date DESC
+				`, feedID, "00000000-0000-0000-0000-000000000000")
+
+				var dailyStats []map[string]interface{}
+				if err == nil {
+					defer rows.Close()
+					for rows.Next() {
+						var date, generations, avgTime, avgSize string
+						err := rows.Scan(&date, &generations, &avgTime, &avgSize)
+						if err == nil {
+							dailyStats = append(dailyStats, map[string]interface{}{
+								"date":        date,
+								"generations": generations,
+								"avgTime":     avgTime,
+								"avgSize":     avgSize,
+							})
+						}
+					}
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data": gin.H{
+						"feed": gin.H{
+							"name":          feedName,
+							"channel":       channel,
+							"status":        status,
+							"productsCount": productsCount,
+							"lastGenerated": lastGenerated.String,
+						},
+						"statistics": gin.H{
+							"totalGenerations":      totalGenerations,
+							"successfulGenerations": successfulGenerations,
+							"failedGenerations":     failedGenerations,
+							"successRate": func() float64 {
+								if totalGenerations > 0 {
+									return float64(successfulGenerations) / float64(totalGenerations) * 100
+								}
+								return 0
+							}(),
+							"avgGenerationTime": avgGenerationTime,
+							"avgFileSize":       avgFileSize,
+						},
+						"dailyStats": dailyStats,
+					},
+				})
+			})
+
+			// Feed Preview
+			feeds.GET("/:id/preview", func(c *gin.Context) {
+				feedID := c.Param("id")
+				limit := c.DefaultQuery("limit", "10")
+
+				limitInt, _ := strconv.Atoi(limit)
+				if limitInt > 100 {
+					limitInt = 100
+				}
+
+				// Get feed details
+				var channel, format string
+				err := db.QueryRow(`
+					SELECT channel, format
+					FROM product_feeds 
+					WHERE id = $1 AND organization_id = $2
+				`, feedID, "00000000-0000-0000-0000-000000000000").Scan(&channel, &format)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Feed not found"})
+					return
+				}
+
+				// Get sample products
+				rows, err := db.Query(`
+					SELECT id, external_id, title, description, price, currency, sku, brand, category, images
+					FROM products 
+					WHERE status = 'ACTIVE' AND price > 0
+					ORDER BY created_at DESC 
+					LIMIT $1
+				`, limitInt)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
+					return
+				}
+				defer rows.Close()
+
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, brand, category, currency, images string
+					var sku sql.NullString
+					var price sql.NullFloat64
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category, &images)
+					if err != nil {
+						continue
+					}
+
+					// Parse images
+					var imageList []string
+					if images != "" {
+						cleanImages := strings.Trim(images, "{}")
+						if cleanImages != "" {
+							imageList = strings.Split(cleanImages, ",")
+						}
+					}
+
+					products = append(products, map[string]interface{}{
+						"id":          externalID,
+						"title":       title,
+						"description": description,
+						"price":       fmt.Sprintf("%.2f %s", price.Float64, currency),
+						"sku":         sku.String,
+						"brand":       brand,
+						"category":    category,
+						"image_link": func() string {
+							if len(imageList) > 0 {
+								return imageList[0]
+							}
+							return ""
+						}(),
+					})
+				}
+
+				// Generate preview content based on format
+				var previewContent string
+				if channel == "Google Shopping" && format == "xml" {
+					previewContent = generateGoogleShoppingXML(products)
+				} else if channel == "Facebook" && format == "csv" {
+					previewContent = generateFacebookCSV(products)
+				} else {
+					// Default JSON
+					previewContent = fmt.Sprintf("%+v", gin.H{
+						"feed_type": strings.ToLower(strings.ReplaceAll(channel, " ", "_")),
+						"products":  products,
+						"total":     len(products),
+					})
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data": gin.H{
+						"channel":        channel,
+						"format":         format,
+						"previewContent": previewContent,
+						"productsCount":  len(products),
+						"sampleProducts": products,
+					},
 				})
 			})
 		}
