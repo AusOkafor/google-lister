@@ -5376,11 +5376,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var history []map[string]interface{}
 				for rows.Next() {
-					var id, status, productsProcessed, productsIncluded, productsExcluded, generationTimeMs, fileSizeBytes, errorMessage, fileURL, fileFormat, startedAt string
+					var id, status, errorMessage, fileURL, fileFormat, startedAt string
+					var productsProcessed, productsIncluded, productsExcluded, generationTimeMs, fileSizeBytes int
 					var completedAt sql.NullString
 
 					err := rows.Scan(&id, &status, &productsProcessed, &productsIncluded, &productsExcluded, &generationTimeMs, &fileSizeBytes, &errorMessage, &fileURL, &fileFormat, &startedAt, &completedAt)
 					if err != nil {
+						log.Printf("Error scanning history row: %v", err)
 						continue
 					}
 
