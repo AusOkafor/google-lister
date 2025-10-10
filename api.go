@@ -4203,12 +4203,20 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var feeds []map[string]interface{}
 				for rows.Next() {
-					var id, name, channel, format, status, productsCount, lastGenerated, createdAt, updatedAt string
+					var id, name, channel, format, status, createdAt, updatedAt string
+					var productsCount int
+					var lastGenerated sql.NullTime
 					var settings sql.NullString
 
 					err := rows.Scan(&id, &name, &channel, &format, &status, &productsCount, &lastGenerated, &createdAt, &updatedAt, &settings)
 					if err != nil {
+						log.Printf("Error scanning feed row: %v", err)
 						continue
+					}
+
+					lastGeneratedStr := ""
+					if lastGenerated.Valid {
+						lastGeneratedStr = lastGenerated.Time.Format(time.RFC3339)
 					}
 
 					feeds = append(feeds, map[string]interface{}{
@@ -4218,7 +4226,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"format":        format,
 						"status":        status,
 						"productsCount": productsCount,
-						"lastGenerated": lastGenerated,
+						"lastGenerated": lastGeneratedStr,
 						"createdAt":     createdAt,
 						"updatedAt":     updatedAt,
 						"settings":      settings.String,
@@ -4296,7 +4304,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			feeds.GET("/:id", func(c *gin.Context) {
 				feedID := c.Param("id")
 
-				var id, name, channel, format, status, productsCount, lastGenerated, createdAt, updatedAt string
+				var id, name, channel, format, status, createdAt, updatedAt string
+				var productsCount int
+				var lastGenerated sql.NullTime
 				var settings sql.NullString
 
 				err := db.QueryRow(`
@@ -4309,8 +4319,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					&lastGenerated, &createdAt, &updatedAt, &settings)
 
 				if err != nil {
+					log.Printf("Error fetching feed by ID: %v", err)
 					c.JSON(http.StatusNotFound, gin.H{"error": "Feed not found"})
 					return
+				}
+
+				lastGeneratedStr := ""
+				if lastGenerated.Valid {
+					lastGeneratedStr = lastGenerated.Time.Format(time.RFC3339)
 				}
 
 				c.JSON(http.StatusOK, gin.H{
@@ -4321,7 +4337,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"format":        format,
 						"status":        status,
 						"productsCount": productsCount,
-						"lastGenerated": lastGenerated,
+						"lastGenerated": lastGeneratedStr,
 						"createdAt":     createdAt,
 						"updatedAt":     updatedAt,
 						"settings":      settings.String,
@@ -7243,5 +7259,5 @@ func filterTemplatesByChannel(templates []map[string]interface{}, channel string
 
 // This function is required by Vercel
 func main() {
-        // This won't be called in Vercel, but required for Go compilation
+	// This won't be called in Vercel, but required for Go compilation
 }
