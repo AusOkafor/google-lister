@@ -8029,8 +8029,8 @@ func applyProductFilters(whereClauses *[]string, args *[]interface{}, argIndex *
 		}
 	}
 
-	// Tag filter (from metadata)
-	if tags, ok := filters["tags"].([]interface{}); ok && len(tags) > 0 {
+	// INCLUDE Tags filter (from metadata) - WHITELIST
+	if tags, ok := filters["include_tags"].([]interface{}); ok && len(tags) > 0 {
 		tagStrings := make([]string, 0, len(tags))
 		for _, t := range tags {
 			if tagStr, ok := t.(string); ok {
@@ -8048,8 +8048,27 @@ func applyProductFilters(whereClauses *[]string, args *[]interface{}, argIndex *
 		}
 	}
 
-	// Collection filter (from metadata)
-	if collections, ok := filters["collections"].([]interface{}); ok && len(collections) > 0 {
+	// EXCLUDE Tags filter (from metadata) - BLACKLIST
+	if excludeTags, ok := filters["exclude_tags"].([]interface{}); ok && len(excludeTags) > 0 {
+		excludeTagStrings := make([]string, 0, len(excludeTags))
+		for _, t := range excludeTags {
+			if tagStr, ok := t.(string); ok {
+				excludeTagStrings = append(excludeTagStrings, tagStr)
+			}
+		}
+		if len(excludeTagStrings) > 0 {
+			excludeConditions := make([]string, len(excludeTagStrings))
+			for i, tag := range excludeTagStrings {
+				excludeConditions[i] = fmt.Sprintf("metadata::text NOT LIKE $%d", *argIndex)
+				*args = append(*args, "%\""+tag+"\"%")
+				*argIndex++
+			}
+			*whereClauses = append(*whereClauses, strings.Join(excludeConditions, " AND "))
+		}
+	}
+
+	// INCLUDE Collection filter (from metadata) - WHITELIST
+	if collections, ok := filters["include_collections"].([]interface{}); ok && len(collections) > 0 {
 		collectionStrings := make([]string, 0, len(collections))
 		for _, c := range collections {
 			if colStr, ok := c.(string); ok {
@@ -8064,6 +8083,25 @@ func applyProductFilters(whereClauses *[]string, args *[]interface{}, argIndex *
 				*argIndex++
 			}
 			*whereClauses = append(*whereClauses, "("+strings.Join(colConditions, " OR ")+")")
+		}
+	}
+
+	// EXCLUDE Collection filter (from metadata) - BLACKLIST
+	if excludeCollections, ok := filters["exclude_collections"].([]interface{}); ok && len(excludeCollections) > 0 {
+		excludeColStrings := make([]string, 0, len(excludeCollections))
+		for _, c := range excludeCollections {
+			if colStr, ok := c.(string); ok {
+				excludeColStrings = append(excludeColStrings, colStr)
+			}
+		}
+		if len(excludeColStrings) > 0 {
+			excludeConditions := make([]string, len(excludeColStrings))
+			for i, col := range excludeColStrings {
+				excludeConditions[i] = fmt.Sprintf("metadata::text NOT LIKE $%d", *argIndex)
+				*args = append(*args, "%\""+col+"\"%")
+				*argIndex++
+			}
+			*whereClauses = append(*whereClauses, strings.Join(excludeConditions, " AND "))
 		}
 	}
 
