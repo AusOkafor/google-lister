@@ -4398,12 +4398,32 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					rows, err := db.Query(query, filterArgs...)
 					if err != nil {
 						log.Printf("Failed to fetch products: %v", err)
+						errorMsg := fmt.Sprintf("Failed to fetch products: %v", err)
 						db.Exec(`UPDATE product_feeds SET status = 'error', updated_at = NOW() WHERE id = $1`, feedID)
 						db.Exec(`
 							UPDATE feed_generation_history 
 							SET status = 'failed', error_message = $1, completed_at = NOW() 
 							WHERE id = $2
-						`, fmt.Sprintf("Failed to fetch products: %v", err), historyID)
+						`, errorMsg, historyID)
+
+						// Trigger webhook for failure
+						triggerWebhook(db, feedID, "feed.failed", map[string]interface{}{
+							"event":      "feed.failed",
+							"feed_id":    feedID,
+							"feed_name":  name,
+							"channel":    channel,
+							"error":      errorMsg,
+							"timestamp":  time.Now().Format(time.RFC3339),
+						})
+
+						// Update schedule consecutive failures
+						db.Exec(`
+							UPDATE feed_schedules 
+							SET consecutive_failures = consecutive_failures + 1,
+							    status = CASE WHEN consecutive_failures >= 3 THEN 'failed' ELSE 'active' END,
+							    updated_at = NOW()
+							WHERE feed_id = $1
+						`, feedID)
 						return
 					}
 					defer rows.Close()
@@ -4516,6 +4536,30 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					}
 
 					log.Printf("Feed %s generated successfully: %d products included, %d excluded, %dms", feedID, productsIncluded, productsExcluded, generationTime)
+
+					// Trigger webhook notification
+					triggerWebhook(db, feedID, "feed.generated", map[string]interface{}{
+						"event":             "feed.generated",
+						"feed_id":           feedID,
+						"feed_name":         name,
+						"channel":           channel,
+						"format":            format,
+						"products_included": productsIncluded,
+						"products_excluded": productsExcluded,
+						"generation_time_ms": generationTime,
+						"file_size_bytes":   fileSize,
+						"timestamp":         time.Now().Format(time.RFC3339),
+					})
+
+					// Update schedule last_run_at
+					db.Exec(`
+						UPDATE feed_schedules 
+						SET last_run_at = NOW(), 
+						    next_run_at = NOW() + (interval_hours || ' hours')::INTERVAL,
+						    consecutive_failures = 0,
+						    updated_at = NOW()
+						WHERE feed_id = $1
+					`, feedID)
 				}()
 
 				c.JSON(http.StatusOK, gin.H{
@@ -4902,6 +4946,299 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					c.Header("Content-Disposition", "attachment; filename=instagram_shopping.json")
 					c.String(http.StatusOK, jsonContent)
 				}
+			})
+
+			// Feed Schedule Management
+			feeds.GET("/:id/schedule", func(c *gin.Context) {
+				feedID := c.Param("id")
+				organizationID := "00000000-0000-0000-0000-000000000000"
+
+				var schedule struct {
+					ID                  string `db:"id"`
+					Enabled             bool   `db:"enabled"`
+					IntervalHours       int    `db:"interval_hours"`
+					NextRunAt           string `db:"next_run_at"`
+					LastRunAt           string `db:"last_run_at"`
+					Status              string `db:"status"`
+					ConsecutiveFailures int    `db:"consecutive_failures"`
+				}
+
+				err := db.QueryRow(`
+					SELECT id, enabled, interval_hours, next_run_at, last_run_at, 
+					       status, consecutive_failures
+					FROM feed_schedules 
+					WHERE feed_id = $1 AND organization_id = $2
+				`, feedID, organizationID).Scan(
+					&schedule.ID, &schedule.Enabled, &schedule.IntervalHours,
+					&schedule.NextRunAt, &schedule.LastRunAt, &schedule.Status,
+					&schedule.ConsecutiveFailures,
+				)
+
+				if err != nil {
+					// No schedule exists, return default
+					c.JSON(http.StatusOK, gin.H{
+						"data": gin.H{
+							"enabled":       false,
+							"intervalHours": 24,
+							"status":        "inactive",
+						},
+					})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{"data": schedule})
+			})
+
+			feeds.PUT("/:id/schedule", func(c *gin.Context) {
+				feedID := c.Param("id")
+				organizationID := "00000000-0000-0000-0000-000000000000"
+
+				var req map[string]interface{}
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+					return
+				}
+
+				enabled := req["enabled"].(bool)
+				intervalHours := int(req["interval_hours"].(float64))
+
+				// Upsert schedule
+				_, err := db.Exec(`
+					INSERT INTO feed_schedules (feed_id, organization_id, enabled, interval_hours, status)
+					VALUES ($1, $2, $3, $4, 'active')
+					ON CONFLICT (feed_id) 
+					DO UPDATE SET 
+						enabled = $3, 
+						interval_hours = $4, 
+						status = 'active',
+						updated_at = NOW()
+				`, feedID, organizationID, enabled, intervalHours)
+
+				if err != nil {
+					log.Printf("Failed to update schedule: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update schedule"})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{"message": "Schedule updated successfully"})
+			})
+
+			// Webhook Management
+			feeds.GET("/:id/webhook", func(c *gin.Context) {
+				feedID := c.Param("id")
+				organizationID := "00000000-0000-0000-0000-000000000000"
+
+				var webhook struct {
+					ID      string   `db:"id"`
+					URL     string   `db:"url"`
+					Enabled bool     `db:"enabled"`
+					Events  []string `db:"events"`
+				}
+
+				var eventsJSON string
+				err := db.QueryRow(`
+					SELECT id, url, enabled, events
+					FROM feed_webhooks 
+					WHERE feed_id = $1 AND organization_id = $2
+				`, feedID, organizationID).Scan(&webhook.ID, &webhook.URL, &webhook.Enabled, &eventsJSON)
+
+				if err != nil {
+					c.JSON(http.StatusOK, gin.H{
+						"data": gin.H{
+							"enabled": false,
+							"url":     "",
+							"events":  []string{},
+						},
+					})
+					return
+				}
+
+				// Parse events array
+				webhook.Events = []string{}
+				json.Unmarshal([]byte(eventsJSON), &webhook.Events)
+
+				c.JSON(http.StatusOK, gin.H{"data": webhook})
+			})
+
+			feeds.PUT("/:id/webhook", func(c *gin.Context) {
+				feedID := c.Param("id")
+				organizationID := "00000000-0000-0000-0000-000000000000"
+
+				var req map[string]interface{}
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+					return
+				}
+
+				enabled := req["enabled"].(bool)
+				url := req["url"].(string)
+				events := req["events"].([]interface{})
+
+				eventsJSON, _ := json.Marshal(events)
+
+				// Upsert webhook
+				_, err := db.Exec(`
+					INSERT INTO feed_webhooks (feed_id, organization_id, url, enabled, events)
+					VALUES ($1, $2, $3, $4, $5)
+					ON CONFLICT ON CONSTRAINT feed_webhooks_pkey
+					DO UPDATE SET 
+						url = $3, 
+						enabled = $4, 
+						events = $5,
+						updated_at = NOW()
+					WHERE feed_webhooks.feed_id = $1
+				`, feedID, organizationID, url, enabled, string(eventsJSON))
+
+				if err != nil {
+					log.Printf("Failed to update webhook: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update webhook"})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{"message": "Webhook updated successfully"})
+			})
+
+			// Platform Credentials Management
+			feeds.GET("/:id/credentials", func(c *gin.Context) {
+				feedID := c.Param("id")
+				organizationID := "00000000-0000-0000-0000-000000000000"
+
+				rows, err := db.Query(`
+					SELECT platform, merchant_id, auto_submit, submit_on_regenerate,
+					       last_submission_at, last_submission_status
+					FROM platform_credentials 
+					WHERE feed_id = $1 AND organization_id = $2
+				`, feedID, organizationID)
+
+				if err != nil {
+					c.JSON(http.StatusOK, gin.H{"data": []interface{}{}})
+					return
+				}
+				defer rows.Close()
+
+				var credentials []map[string]interface{}
+				for rows.Next() {
+					var platform, merchantID, lastSubmissionStatus string
+					var autoSubmit, submitOnRegenerate bool
+					var lastSubmissionAt sql.NullTime
+
+					rows.Scan(&platform, &merchantID, &autoSubmit, &submitOnRegenerate,
+						&lastSubmissionAt, &lastSubmissionStatus)
+
+					lastSubStr := ""
+					if lastSubmissionAt.Valid {
+						lastSubStr = lastSubmissionAt.Time.Format(time.RFC3339)
+					}
+
+					credentials = append(credentials, map[string]interface{}{
+						"platform":             platform,
+						"merchantId":           merchantID,
+						"autoSubmit":           autoSubmit,
+						"submitOnRegenerate":   submitOnRegenerate,
+						"lastSubmissionAt":     lastSubStr,
+						"lastSubmissionStatus": lastSubmissionStatus,
+					})
+				}
+
+				c.JSON(http.StatusOK, gin.H{"data": credentials})
+			})
+
+			feeds.PUT("/:id/credentials", func(c *gin.Context) {
+				feedID := c.Param("id")
+				organizationID := "00000000-0000-0000-0000-000000000000"
+
+				var req map[string]interface{}
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+					return
+				}
+
+				platform := req["platform"].(string)
+				apiKey := req["api_key"].(string)
+				merchantID := req["merchant_id"].(string)
+				accessToken := req["access_token"].(string)
+				autoSubmit := req["auto_submit"].(bool)
+
+				// Upsert credentials
+				_, err := db.Exec(`
+					INSERT INTO platform_credentials (
+						feed_id, organization_id, platform, api_key, merchant_id, 
+						access_token, auto_submit, submit_on_regenerate
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+					ON CONFLICT (feed_id, platform) 
+					DO UPDATE SET 
+						api_key = $4, 
+						merchant_id = $5, 
+						access_token = $6,
+						auto_submit = $7,
+						updated_at = NOW()
+				`, feedID, organizationID, platform, apiKey, merchantID, accessToken, autoSubmit)
+
+				if err != nil {
+					log.Printf("Failed to save credentials: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save credentials"})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{"message": "Credentials saved successfully"})
+			})
+
+			// Run Scheduled Feeds (for cron/scheduler)
+			feeds.POST("/run-scheduled", func(c *gin.Context) {
+				// This endpoint should be called by a cron job or external scheduler
+				// Find all feeds that are due for regeneration
+				rows, err := db.Query(`
+					SELECT fs.feed_id, pf.name, pf.channel, pf.format
+					FROM feed_schedules fs
+					JOIN product_feeds pf ON fs.feed_id = pf.id
+					WHERE fs.enabled = TRUE 
+					  AND fs.status = 'active'
+					  AND fs.next_run_at <= NOW()
+					ORDER BY fs.next_run_at ASC
+					LIMIT 50
+				`)
+
+				if err != nil {
+					log.Printf("Failed to fetch scheduled feeds: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch scheduled feeds"})
+					return
+				}
+				defer rows.Close()
+
+				var scheduledFeeds []map[string]interface{}
+				for rows.Next() {
+					var feedID, name, channel, format string
+					if err := rows.Scan(&feedID, &name, &channel, &format); err != nil {
+						continue
+					}
+
+					// Trigger regeneration for this feed (call internal regeneration logic)
+					// For now, just log and update schedule
+					log.Printf("Triggering scheduled regeneration for feed: %s (%s)", name, feedID)
+
+					scheduledFeeds = append(scheduledFeeds, map[string]interface{}{
+						"feed_id": feedID,
+						"name":    name,
+						"channel": channel,
+						"format":  format,
+					})
+
+					// TODO: Trigger actual regeneration here
+					// For now, just update the schedule
+					db.Exec(`
+						UPDATE feed_schedules 
+						SET last_run_at = NOW(),
+						    next_run_at = NOW() + (interval_hours || ' hours')::INTERVAL,
+						    updated_at = NOW()
+						WHERE feed_id = $1
+					`, feedID)
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"message":        "Scheduled feeds processed",
+					"processed":      len(scheduledFeeds),
+					"scheduled_feeds": scheduledFeeds,
+				})
 			})
 
 			// Feed Statistics
@@ -7884,9 +8221,9 @@ func validateGoogleShoppingFeed(product map[string]interface{}) []string {
 // validateFacebookFeed validates Facebook feed requirements
 func validateFacebookFeed(product map[string]interface{}) []string {
 	var errors []string
-
+	
 	requiredFields := []string{"id", "title", "description", "availability", "condition", "price", "link", "image_link"}
-
+	
 	for _, field := range requiredFields {
 		var value string
 		switch field {
@@ -7903,13 +8240,123 @@ func validateFacebookFeed(product map[string]interface{}) []string {
 		default:
 			value = getProductField(product, field)
 		}
-
+		
 		if value == "" {
 			errors = append(errors, fmt.Sprintf("Missing required field: %s", field))
 		}
 	}
-
+	
 	return errors
+}
+
+// ============================================================================
+// WEBHOOK NOTIFICATION SYSTEM
+// ============================================================================
+
+// triggerWebhook sends webhook notification for feed events
+func triggerWebhook(db *sql.DB, feedID string, event string, payload map[string]interface{}) {
+	go func() {
+		// Get all webhooks for this feed
+		rows, err := db.Query(`
+			SELECT id, url, secret, retry_count, timeout_seconds
+			FROM feed_webhooks 
+			WHERE feed_id = $1 AND enabled = TRUE AND $2 = ANY(events)
+		`, feedID, event)
+
+		if err != nil {
+			log.Printf("Failed to fetch webhooks: %v", err)
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var webhookID, url, secret string
+			var retryCount, timeoutSeconds int
+
+			if err := rows.Scan(&webhookID, &url, &secret, &retryCount, &timeoutSeconds); err != nil {
+				continue
+			}
+
+			// Send webhook with retries
+			deliverWebhook(db, webhookID, feedID, url, event, payload, retryCount, timeoutSeconds)
+		}
+	}()
+}
+
+// deliverWebhook delivers webhook with retry logic
+func deliverWebhook(db *sql.DB, webhookID, feedID, url, event string, payload map[string]interface{}, maxRetries, timeoutSeconds int) {
+	payloadJSON, _ := json.Marshal(payload)
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		startTime := time.Now()
+
+		// Create HTTP client with timeout
+		client := &http.Client{
+			Timeout: time.Duration(timeoutSeconds) * time.Second,
+		}
+
+		req, err := http.NewRequest("POST", url, strings.NewReader(string(payloadJSON)))
+		if err != nil {
+			logWebhookDelivery(db, webhookID, feedID, event, payloadJSON, 0, "", 0, false, fmt.Sprintf("Failed to create request: %v", err), attempt)
+			continue
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Webhook-Event", event)
+		req.Header.Set("X-Feed-ID", feedID)
+
+		resp, err := client.Do(req)
+		responseTime := time.Since(startTime).Milliseconds()
+
+		if err != nil {
+			logWebhookDelivery(db, webhookID, feedID, event, payloadJSON, 0, "", int(responseTime), false, fmt.Sprintf("Request failed: %v", err), attempt)
+			if attempt < maxRetries {
+				time.Sleep(time.Duration(attempt+1) * time.Second) // Exponential backoff
+			}
+			continue
+		}
+
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+
+		success := resp.StatusCode >= 200 && resp.StatusCode < 300
+		logWebhookDelivery(db, webhookID, feedID, event, payloadJSON, resp.StatusCode, string(body), int(responseTime), success, "", attempt)
+
+		// Update webhook stats
+		if success {
+			db.Exec(`
+				UPDATE feed_webhooks 
+				SET last_triggered_at = NOW(), 
+				    total_deliveries = total_deliveries + 1,
+				    successful_deliveries = successful_deliveries + 1,
+				    updated_at = NOW()
+				WHERE id = $1
+			`, webhookID)
+			return // Success, no need to retry
+		} else {
+			db.Exec(`
+				UPDATE feed_webhooks 
+				SET total_deliveries = total_deliveries + 1,
+				    failed_deliveries = failed_deliveries + 1,
+				    updated_at = NOW()
+				WHERE id = $1
+			`, webhookID)
+		}
+
+		if attempt < maxRetries {
+			time.Sleep(time.Duration(attempt+1) * time.Second)
+		}
+	}
+}
+
+// logWebhookDelivery logs webhook delivery attempt
+func logWebhookDelivery(db *sql.DB, webhookID, feedID, event string, payload []byte, statusCode int, responseBody string, responseTime int, success bool, errorMsg string, retryAttempt int) {
+	db.Exec(`
+		INSERT INTO webhook_deliveries (
+			webhook_id, feed_id, event, payload, status_code, response_body,
+			response_time_ms, success, error_message, retry_attempt
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, webhookID, feedID, event, string(payload), statusCode, responseBody, responseTime, success, errorMsg, retryAttempt)
 }
 
 // This function is required by Vercel
