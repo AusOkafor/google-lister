@@ -4345,13 +4345,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				feedID := c.Param("id")
 				organizationID := "00000000-0000-0000-0000-000000000000"
 
-				// Get feed details
+				// Get feed details including settings
 				var name, channel, format, status string
+				var settings sql.NullString
 				err := db.QueryRow(`
-					SELECT name, channel, format, status
+					SELECT name, channel, format, status, settings
 					FROM product_feeds 
 					WHERE id = $1 AND organization_id = $2
-				`, feedID, organizationID).Scan(&name, &channel, &format, &status)
+				`, feedID, organizationID).Scan(&name, &channel, &format, &status, &settings)
 
 				if err != nil {
 					log.Printf("Feed not found: %v", err)
@@ -4382,16 +4383,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				go func() {
 					startTime := time.Now()
 
-					// Fetch products from database, exclude out of stock
-					query := `
+					// Build filter WHERE clause from feed settings
+					whereClause, filterArgs := buildFeedFilters(settings.String)
+
+					// Fetch products from database with filters applied
+					query := fmt.Sprintf(`
 						SELECT id, external_id, title, description, price, currency, sku, 
 						       brand, category, images, status, metadata
 						FROM products 
-						WHERE status NOT IN ('OUT_OF_STOCK', 'ARCHIVED', 'DRAFT')
+						WHERE %s
 						ORDER BY created_at DESC
-					`
+					`, whereClause)
 
-					rows, err := db.Query(query)
+					rows, err := db.Query(query, filterArgs...)
 					if err != nil {
 						log.Printf("Failed to fetch products: %v", err)
 						db.Exec(`UPDATE product_feeds SET status = 'error', updated_at = NOW() WHERE id = $1`, feedID)
@@ -4531,13 +4535,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				feedID := c.Param("id")
 				organizationID := "00000000-0000-0000-0000-000000000000"
 
-				// Get feed details
+				// Get feed details including settings
 				var name, channel, feedFormat string
+				var settings sql.NullString
 				err := db.QueryRow(`
-					SELECT name, channel, format
+					SELECT name, channel, format, settings
 					FROM product_feeds 
 					WHERE id = $1 AND organization_id = $2
-				`, feedID, organizationID).Scan(&name, &channel, &feedFormat)
+				`, feedID, organizationID).Scan(&name, &channel, &feedFormat, &settings)
 
 				if err != nil {
 					log.Printf("Feed not found for download: %v", err)
@@ -4545,16 +4550,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Fetch products with available fields, exclude out of stock
-				query := `
+				// Build filter WHERE clause from feed settings
+				whereClause, filterArgs := buildFeedFilters(settings.String)
+
+				// Fetch products with filters applied
+				query := fmt.Sprintf(`
 					SELECT id, external_id, title, description, price, currency, sku, 
 					       brand, category, images, status, metadata
 					FROM products 
-					WHERE status NOT IN ('OUT_OF_STOCK', 'ARCHIVED', 'DRAFT')
+					WHERE %s
 					ORDER BY created_at DESC
-				`
+				`, whereClause)
 
-				rows, err := db.Query(query)
+				rows, err := db.Query(query, filterArgs...)
 				if err != nil {
 					log.Printf("Failed to fetch products for download: %v", err)
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
@@ -5165,13 +5173,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					limitInt = 100
 				}
 
-				// Get feed details
+				// Get feed details including settings
 				var channel, format string
+				var settings sql.NullString
 				err := db.QueryRow(`
-					SELECT channel, format
+					SELECT channel, format, settings
 					FROM product_feeds 
 					WHERE id = $1 AND organization_id = $2
-				`, feedID, organizationID).Scan(&channel, &format)
+				`, feedID, organizationID).Scan(&channel, &format, &settings)
 
 				if err != nil {
 					log.Printf("Feed not found for preview: %v", err)
@@ -5179,18 +5188,21 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Get sample products with available fields
-				// Exclude out of stock products and include metadata for handle
-				query := `
+				// Build filter WHERE clause from feed settings
+				whereClause, filterArgs := buildFeedFilters(settings.String)
+
+				// Get sample products with filters applied
+				query := fmt.Sprintf(`
 					SELECT id, external_id, title, description, price, currency, sku, 
 					       brand, category, images, status, metadata
 					FROM products 
-					WHERE status NOT IN ('OUT_OF_STOCK', 'ARCHIVED', 'DRAFT')
+					WHERE %s
 					ORDER BY created_at DESC 
-					LIMIT $1
-				`
+					LIMIT $%d
+				`, whereClause, len(filterArgs)+1)
 
-				rows, err := db.Query(query, limitInt)
+				filterArgs = append(filterArgs, limitInt)
+				rows, err := db.Query(query, filterArgs...)
 
 				if err != nil {
 					log.Printf("Failed to fetch products for preview: %v", err)
@@ -7583,6 +7595,150 @@ func generateHandle(title string) string {
 	// Trim hyphens from start/end
 	handle = strings.Trim(handle, "-")
 	return handle
+}
+
+// buildFeedFilters builds SQL WHERE clause from feed settings filters
+func buildFeedFilters(settings string) (string, []interface{}) {
+	var whereClauses []string
+	var args []interface{}
+	argIndex := 1
+
+	// Default filter: exclude out of stock and archived
+	whereClauses = append(whereClauses, "status NOT IN ('OUT_OF_STOCK', 'ARCHIVED', 'DRAFT')")
+
+	if settings == "" || settings == "{}" {
+		return strings.Join(whereClauses, " AND "), args
+	}
+
+	// Parse settings JSON
+	var settingsMap map[string]interface{}
+	if err := json.Unmarshal([]byte(settings), &settingsMap); err != nil {
+		log.Printf("Failed to parse feed settings: %v", err)
+		return strings.Join(whereClauses, " AND "), args
+	}
+
+	// Check for filters in settings
+	var filters map[string]interface{}
+	if filtersStr, ok := settingsMap["filters"].(string); ok && filtersStr != "" {
+		if err := json.Unmarshal([]byte(filtersStr), &filters); err == nil {
+			// Apply filters
+			applyProductFilters(&whereClauses, &args, &argIndex, filters)
+		}
+	} else if filtersMap, ok := settingsMap["filters"].(map[string]interface{}); ok {
+		applyProductFilters(&whereClauses, &args, &argIndex, filtersMap)
+	}
+
+	return strings.Join(whereClauses, " AND "), args
+}
+
+// applyProductFilters applies individual filters
+func applyProductFilters(whereClauses *[]string, args *[]interface{}, argIndex *int, filters map[string]interface{}) {
+	// Price range filter
+	if minPrice, ok := filters["min_price"].(float64); ok && minPrice > 0 {
+		*whereClauses = append(*whereClauses, fmt.Sprintf("price >= $%d", *argIndex))
+		*args = append(*args, minPrice)
+		*argIndex++
+	}
+	if maxPrice, ok := filters["max_price"].(float64); ok && maxPrice > 0 {
+		*whereClauses = append(*whereClauses, fmt.Sprintf("price <= $%d", *argIndex))
+		*args = append(*args, maxPrice)
+		*argIndex++
+	}
+
+	// Brand filter
+	if brands, ok := filters["brands"].([]interface{}); ok && len(brands) > 0 {
+		brandStrings := make([]string, 0, len(brands))
+		for _, b := range brands {
+			if brandStr, ok := b.(string); ok {
+				brandStrings = append(brandStrings, brandStr)
+			}
+		}
+		if len(brandStrings) > 0 {
+			placeholders := make([]string, len(brandStrings))
+			for i := range brandStrings {
+				placeholders[i] = fmt.Sprintf("$%d", *argIndex)
+				*args = append(*args, brandStrings[i])
+				*argIndex++
+			}
+			*whereClauses = append(*whereClauses, fmt.Sprintf("brand IN (%s)", strings.Join(placeholders, ",")))
+		}
+	}
+
+	// Category filter
+	if categories, ok := filters["categories"].([]interface{}); ok && len(categories) > 0 {
+		categoryStrings := make([]string, 0, len(categories))
+		for _, c := range categories {
+			if catStr, ok := c.(string); ok {
+				categoryStrings = append(categoryStrings, catStr)
+			}
+		}
+		if len(categoryStrings) > 0 {
+			placeholders := make([]string, len(categoryStrings))
+			for i := range categoryStrings {
+				placeholders[i] = fmt.Sprintf("$%d", *argIndex)
+				*args = append(*args, categoryStrings[i])
+				*argIndex++
+			}
+			*whereClauses = append(*whereClauses, fmt.Sprintf("category IN (%s)", strings.Join(placeholders, ",")))
+		}
+	}
+
+	// Tag filter (from metadata)
+	if tags, ok := filters["tags"].([]interface{}); ok && len(tags) > 0 {
+		tagStrings := make([]string, 0, len(tags))
+		for _, t := range tags {
+			if tagStr, ok := t.(string); ok {
+				tagStrings = append(tagStrings, tagStr)
+			}
+		}
+		if len(tagStrings) > 0 {
+			tagConditions := make([]string, len(tagStrings))
+			for i, tag := range tagStrings {
+				tagConditions[i] = fmt.Sprintf("metadata::text LIKE $%d", *argIndex)
+				*args = append(*args, "%\""+tag+"\"%")
+				*argIndex++
+			}
+			*whereClauses = append(*whereClauses, "("+strings.Join(tagConditions, " OR ")+")")
+		}
+	}
+
+	// Collection filter (from metadata)
+	if collections, ok := filters["collections"].([]interface{}); ok && len(collections) > 0 {
+		collectionStrings := make([]string, 0, len(collections))
+		for _, c := range collections {
+			if colStr, ok := c.(string); ok {
+				collectionStrings = append(collectionStrings, colStr)
+			}
+		}
+		if len(collectionStrings) > 0 {
+			colConditions := make([]string, len(collectionStrings))
+			for i, col := range collectionStrings {
+				colConditions[i] = fmt.Sprintf("metadata::text LIKE $%d", *argIndex)
+				*args = append(*args, "%\""+col+"\"%")
+				*argIndex++
+			}
+			*whereClauses = append(*whereClauses, "("+strings.Join(colConditions, " OR ")+")")
+		}
+	}
+
+	// Exclude specific products
+	if excludeIds, ok := filters["exclude_product_ids"].([]interface{}); ok && len(excludeIds) > 0 {
+		idStrings := make([]string, 0, len(excludeIds))
+		for _, id := range excludeIds {
+			if idStr, ok := id.(string); ok {
+				idStrings = append(idStrings, idStr)
+			}
+		}
+		if len(idStrings) > 0 {
+			placeholders := make([]string, len(idStrings))
+			for i := range idStrings {
+				placeholders[i] = fmt.Sprintf("$%d", *argIndex)
+				*args = append(*args, idStrings[i])
+				*argIndex++
+			}
+			*whereClauses = append(*whereClauses, fmt.Sprintf("id NOT IN (%s)", strings.Join(placeholders, ",")))
+		}
+	}
 }
 
 // getProductImage gets the first product image
