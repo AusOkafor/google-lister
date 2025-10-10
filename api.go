@@ -5076,18 +5076,27 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				eventsJSON, _ := json.Marshal(events)
 
-				// Upsert webhook
-				_, err := db.Exec(`
-					INSERT INTO feed_webhooks (feed_id, organization_id, url, enabled, events)
-					VALUES ($1, $2, $3, $4, $5)
-					ON CONFLICT ON CONSTRAINT feed_webhooks_pkey
-					DO UPDATE SET 
-						url = $3, 
-						enabled = $4, 
-						events = $5,
-						updated_at = NOW()
-					WHERE feed_webhooks.feed_id = $1
-				`, feedID, organizationID, url, enabled, string(eventsJSON))
+				// Upsert webhook - first try to update, then insert if doesn't exist
+				result, err := db.Exec(`
+					UPDATE feed_webhooks 
+					SET url = $1, enabled = $2, events = $3, updated_at = NOW()
+					WHERE feed_id = $4 AND organization_id = $5
+				`, url, enabled, string(eventsJSON), feedID, organizationID)
+
+				if err != nil {
+					log.Printf("Failed to update webhook: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update webhook"})
+					return
+				}
+
+				rowsAffected, _ := result.RowsAffected()
+				if rowsAffected == 0 {
+					// No existing webhook, insert new one
+					_, err = db.Exec(`
+						INSERT INTO feed_webhooks (feed_id, organization_id, url, enabled, events)
+						VALUES ($1, $2, $3, $4, $5)
+					`, feedID, organizationID, url, enabled, string(eventsJSON))
+				}
 
 				if err != nil {
 					log.Printf("Failed to update webhook: %v", err)
