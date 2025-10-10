@@ -5908,16 +5908,31 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Get settings
+			// Get settings from database to check require_approval
+			organizationID := "00000000-0000-0000-0000-000000000000"
+			var requireApproval bool
+			err := db.QueryRow(`
+				SELECT require_approval FROM ai_settings WHERE organization_id = $1
+			`, organizationID).Scan(&requireApproval)
+
+			if err != nil {
+				log.Printf("Warning: Could not fetch require_approval setting: %v, defaulting to true", err)
+				requireApproval = true
+			}
+
+			// Only allow auto-apply if require_approval is false
 			autoApply := false
-			if aa, ok := req["auto_apply"].(bool); ok {
-				autoApply = aa
+			if !requireApproval {
+				if aa, ok := req["auto_apply"].(bool); ok {
+					autoApply = aa
+				}
+			} else {
+				log.Printf("🔒 Auto-apply disabled: require_approval is enabled in settings")
 			}
 
 			results := []gin.H{}
 			successCount := 0
 			failedCount := 0
-			organizationID := "00000000-0000-0000-0000-000000000000"
 
 			fmt.Printf("🔄 Starting bulk optimization: %d products, type: %s\n", len(productIDs), optimizationType)
 
