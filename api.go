@@ -4387,7 +4387,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						SELECT id, external_id, title, description, price, currency, sku, 
 						       brand, category, images, status
 						FROM products 
-						WHERE organization_id = $1 AND status = 'ACTIVE'
+						WHERE organization_id = $1
 						ORDER BY created_at DESC
 					`
 
@@ -4548,7 +4548,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					SELECT id, external_id, title, description, price, currency, sku, 
 					       brand, category, images, status
 					FROM products 
-					WHERE organization_id = $1 AND status = 'ACTIVE'
+					WHERE organization_id = $1
 					ORDER BY created_at DESC
 				`
 
@@ -5180,7 +5180,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					SELECT id, external_id, title, description, price, currency, sku, 
 					       brand, category, images, status
 					FROM products 
-					WHERE organization_id = $1 AND status = 'ACTIVE'
+					WHERE organization_id = $1
 					ORDER BY created_at DESC 
 					LIMIT $2
 				`
@@ -7504,7 +7504,21 @@ func getProductField(product map[string]interface{}, field string) string {
 
 // getProductLink generates product link
 func getProductLink(product map[string]interface{}) string {
-	baseURL := "https://example.com/products/"
+	// Check if product already has a link field
+	if link := getProductField(product, "link"); link != "" {
+		return link
+	}
+
+	// TODO: In production, this should come from the organization's settings
+	// where each user/store has their own shop URL stored in the database
+	// For now, use development store
+	baseURL := "https://austus-themes.myshopify.com/products"
+
+	// Ensure baseURL ends with /
+	if !strings.HasSuffix(baseURL, "/") {
+		baseURL += "/"
+	}
+
 	if id := getProductField(product, "external_id"); id != "" {
 		return baseURL + id
 	}
