@@ -7503,7 +7503,13 @@ func generateInstagramJSON(products []map[string]interface{}) string {
 // getProductField safely gets a product field value
 func getProductField(product map[string]interface{}, field string) string {
 	if val, ok := product[field]; ok && val != nil {
-		return fmt.Sprintf("%v", val)
+		str := fmt.Sprintf("%v", val)
+		// Clean up common formatting issues
+		if field == "title" || field == "description" {
+			// Remove surrounding quotes
+			str = strings.Trim(str, "\"")
+		}
+		return str
 	}
 	return ""
 }
@@ -7550,15 +7556,28 @@ func getProductImages(product map[string]interface{}) []string {
 		return []string{}
 	}
 
-	// Handle JSON string array
+	// Handle string value
 	if imagesStr, ok := imagesVal.(string); ok {
+		// Remove curly braces if present (PostgreSQL array format)
+		imagesStr = strings.Trim(imagesStr, "{}")
+
+		// Try to parse as JSON array
 		var images []string
 		if err := json.Unmarshal([]byte(imagesStr), &images); err == nil {
 			return images
 		}
-		// If not JSON, treat as single image
+
+		// If not JSON, split by comma (PostgreSQL array format)
 		if imagesStr != "" {
-			return []string{imagesStr}
+			images := strings.Split(imagesStr, ",")
+			var cleanImages []string
+			for _, img := range images {
+				img = strings.TrimSpace(img)
+				if img != "" {
+					cleanImages = append(cleanImages, img)
+				}
+			}
+			return cleanImages
 		}
 	}
 
