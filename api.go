@@ -4410,7 +4410,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 					for rows.Next() {
 						var product map[string]interface{} = make(map[string]interface{})
-						var id, externalID, title, description, currency, sku, brand, category, images, status string
+						var id, externalID, title, description, currency, brand, category, images, status string
+						var sku sql.NullString
 						var price float64
 
 						err := rows.Scan(
@@ -4431,7 +4432,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						product["description"] = description
 						product["price"] = price
 						product["currency"] = currency
-						product["sku"] = sku
+						product["sku"] = sku.String
 						product["brand"] = brand
 						product["category"] = category
 						product["images"] = images
@@ -4561,7 +4562,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				var products []map[string]interface{}
 				for rows.Next() {
 					var product map[string]interface{} = make(map[string]interface{})
-					var id, externalID, title, description, currency, sku, brand, category, images, status string
+					var id, externalID, title, description, currency, brand, category, images, status string
+					var sku sql.NullString
 					var price float64
 
 					err := rows.Scan(
@@ -4580,7 +4582,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					product["description"] = description
 					product["price"] = price
 					product["currency"] = currency
-					product["sku"] = sku
+					product["sku"] = sku.String
 					product["brand"] = brand
 					product["category"] = category
 					product["images"] = images
@@ -5197,7 +5199,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				for rows.Next() {
 					rowCount++
 					var product map[string]interface{} = make(map[string]interface{})
-					var id, externalID, title, description, currency, sku, brand, category, images, status string
+					var id, externalID, title, description, currency, brand, category, images, status string
+					var sku sql.NullString
 					var price float64
 
 					err := rows.Scan(
@@ -5216,7 +5219,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					product["description"] = description
 					product["price"] = price
 					product["currency"] = currency
-					product["sku"] = sku
+					product["sku"] = sku.String
 					product["brand"] = brand
 					product["category"] = category
 					product["images"] = images
