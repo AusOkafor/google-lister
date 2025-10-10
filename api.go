@@ -4408,12 +4408,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 						// Trigger webhook for failure
 						triggerWebhook(db, feedID, "feed.failed", map[string]interface{}{
-							"event":      "feed.failed",
-							"feed_id":    feedID,
-							"feed_name":  name,
-							"channel":    channel,
-							"error":      errorMsg,
-							"timestamp":  time.Now().Format(time.RFC3339),
+							"event":     "feed.failed",
+							"feed_id":   feedID,
+							"feed_name": name,
+							"channel":   channel,
+							"error":     errorMsg,
+							"timestamp": time.Now().Format(time.RFC3339),
 						})
 
 						// Update schedule consecutive failures
@@ -4539,16 +4539,16 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 					// Trigger webhook notification
 					triggerWebhook(db, feedID, "feed.generated", map[string]interface{}{
-						"event":             "feed.generated",
-						"feed_id":           feedID,
-						"feed_name":         name,
-						"channel":           channel,
-						"format":            format,
-						"products_included": productsIncluded,
-						"products_excluded": productsExcluded,
+						"event":              "feed.generated",
+						"feed_id":            feedID,
+						"feed_name":          name,
+						"channel":            channel,
+						"format":             format,
+						"products_included":  productsIncluded,
+						"products_excluded":  productsExcluded,
 						"generation_time_ms": generationTime,
-						"file_size_bytes":   fileSize,
-						"timestamp":         time.Now().Format(time.RFC3339),
+						"file_size_bytes":    fileSize,
+						"timestamp":          time.Now().Format(time.RFC3339),
 					})
 
 					// Update schedule last_run_at
@@ -5235,8 +5235,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				c.JSON(http.StatusOK, gin.H{
-					"message":        "Scheduled feeds processed",
-					"processed":      len(scheduledFeeds),
+					"message":         "Scheduled feeds processed",
+					"processed":       len(scheduledFeeds),
 					"scheduled_feeds": scheduledFeeds,
 				})
 			})
@@ -8221,9 +8221,9 @@ func validateGoogleShoppingFeed(product map[string]interface{}) []string {
 // validateFacebookFeed validates Facebook feed requirements
 func validateFacebookFeed(product map[string]interface{}) []string {
 	var errors []string
-	
+
 	requiredFields := []string{"id", "title", "description", "availability", "condition", "price", "link", "image_link"}
-	
+
 	for _, field := range requiredFields {
 		var value string
 		switch field {
@@ -8240,12 +8240,12 @@ func validateFacebookFeed(product map[string]interface{}) []string {
 		default:
 			value = getProductField(product, field)
 		}
-		
+
 		if value == "" {
 			errors = append(errors, fmt.Sprintf("Missing required field: %s", field))
 		}
 	}
-	
+
 	return errors
 }
 
