@@ -918,97 +918,6 @@ func getFloatValue(nf sql.NullFloat64) float64 {
 }
 
 // generateGoogleShoppingXML generates XML feed for Google Shopping
-func generateGoogleShoppingXML(products []map[string]interface{}) string {
-	xml := `<?xml version="1.0" encoding="UTF-8"?>
-<rss xmlns:g="http://base.google.com/ns/1.0" version="2.0">
-  <channel>
-    <title>Product Feed</title>
-    <link>https://austus-themes.myshopify.com</link>
-    <description>Product feed for Google Shopping</description>`
-
-	for _, product := range products {
-		xml += fmt.Sprintf(`
-    <item>
-      <g:id>%s</g:id>
-      <g:title>%s</g:title>
-      <g:description>%s</g:description>
-      <g:price>%s</g:price>
-      <g:brand>%s</g:brand>
-      <g:condition>%s</g:condition>
-      <g:availability>%s</g:availability>
-      <g:image_link>%s</g:image_link>
-      <g:product_type>%s</g:product_type>
-    </item>`,
-			product["id"],
-			product["title"],
-			product["description"],
-			product["price"],
-			product["brand"],
-			product["condition"],
-			product["availability"],
-			product["image_link"],
-			product["category"])
-	}
-
-	xml += `
-  </channel>
-</rss>`
-	return xml
-}
-
-// generateFacebookCSV generates CSV feed for Facebook Catalog
-func generateFacebookCSV(products []map[string]interface{}) string {
-	csv := "id,name,description,price,sku,brand,category,image_url,availability,condition,url\n"
-
-	for _, product := range products {
-		imageURL := ""
-		if images, ok := product["image_url"].([]string); ok && len(images) > 0 {
-			imageURL = images[0]
-		}
-
-		csv += fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
-			product["id"],
-			product["name"],
-			product["description"],
-			product["price"],
-			product["sku"],
-			product["brand"],
-			product["category"],
-			imageURL,
-			product["availability"],
-			product["condition"],
-			product["url"])
-	}
-
-	return csv
-}
-
-// generateInstagramCSV generates CSV feed for Instagram Shopping
-func generateInstagramCSV(products []map[string]interface{}) string {
-	csv := "id,name,description,price,sku,brand,category,image_url,availability,condition,url\n"
-
-	for _, product := range products {
-		imageURL := ""
-		if images, ok := product["image_url"].([]string); ok && len(images) > 0 {
-			imageURL = images[0]
-		}
-
-		csv += fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
-			product["id"],
-			product["name"],
-			product["description"],
-			product["price"],
-			product["sku"],
-			product["brand"],
-			product["category"],
-			imageURL,
-			product["availability"],
-			product["condition"],
-			product["url"])
-	}
-
-	return csv
-}
 
 // AI-Powered Helper Functions with OpenRouter Integration
 
@@ -4472,7 +4381,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Generate feed asynchronously
 				go func() {
 					startTime := time.Now()
-					
+
 					// Fetch products from database
 					query := `
 						SELECT id, external_id, title, description, price, currency, sku, 
@@ -4482,7 +4391,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						WHERE organization_id = $1 AND status = 'ACTIVE'
 						ORDER BY created_at DESC
 					`
-					
+
 					rows, err := db.Query(query, organizationID)
 					if err != nil {
 						log.Printf("Failed to fetch products: %v", err)
@@ -5056,18 +4965,16 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				if format == "csv" {
 					// Generate CSV feed
-					csvContent := generateInstagramCSV(products)
+					csvContent := generateFacebookCSV(products)
 					c.Header("Content-Type", "text/csv")
 					c.Header("Content-Disposition", "attachment; filename=instagram_shopping.csv")
 					c.String(http.StatusOK, csvContent)
 				} else {
 					// Return JSON format
-					c.JSON(http.StatusOK, gin.H{
-						"feed_type": "instagram_shopping",
-						"products":  products,
-						"total":     len(products),
-						"message":   "Instagram Shopping feed generated successfully",
-					})
+					jsonContent := generateInstagramJSON(products)
+					c.Header("Content-Type", "application/json")
+					c.Header("Content-Disposition", "attachment; filename=instagram_shopping.json")
+					c.String(http.StatusOK, jsonContent)
 				}
 			})
 
@@ -5364,7 +5271,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					ORDER BY created_at DESC 
 					LIMIT $2
 				`
-				
+
 				rows, err := db.Query(query, organizationID, limitInt)
 
 				if err != nil {
@@ -7534,7 +7441,7 @@ func filterTemplatesByChannel(templates []map[string]interface{}, channel string
 // generateGoogleShoppingXML generates Google Shopping XML feed
 func generateGoogleShoppingXML(products []map[string]interface{}) string {
 	var xml strings.Builder
-	
+
 	// XML header and namespace declarations
 	xml.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
 	xml.WriteString("\n")
@@ -7543,10 +7450,10 @@ func generateGoogleShoppingXML(products []map[string]interface{}) string {
 	xml.WriteString("    <title>Product Feed</title>\n")
 	xml.WriteString("    <link>https://example.com</link>\n")
 	xml.WriteString("    <description>Product Feed for Google Shopping</description>\n")
-	
+
 	for _, product := range products {
 		xml.WriteString("    <item>\n")
-		
+
 		// Required fields for Google Shopping
 		xml.WriteString(fmt.Sprintf("      <g:id><![CDATA[%v]]></g:id>\n", getProductField(product, "external_id")))
 		xml.WriteString(fmt.Sprintf("      <g:title><![CDATA[%v]]></g:title>\n", getProductField(product, "title")))
@@ -7556,38 +7463,38 @@ func generateGoogleShoppingXML(products []map[string]interface{}) string {
 		xml.WriteString(fmt.Sprintf("      <g:condition><![CDATA[%v]]></g:condition>\n", getProductCondition(product)))
 		xml.WriteString(fmt.Sprintf("      <g:availability><![CDATA[%v]]></g:availability>\n", getProductAvailability(product)))
 		xml.WriteString(fmt.Sprintf("      <g:price><![CDATA[%v %v]]></g:price>\n", getProductField(product, "price"), getProductField(product, "currency")))
-		
+
 		// Optional but recommended fields
 		if brand := getProductField(product, "brand"); brand != "" {
 			xml.WriteString(fmt.Sprintf("      <g:brand><![CDATA[%v]]></g:brand>\n", brand))
 		}
-		
+
 		if gtin := getProductField(product, "gtin"); gtin != "" {
 			xml.WriteString(fmt.Sprintf("      <g:gtin><![CDATA[%v]]></g:gtin>\n", gtin))
 		}
-		
+
 		if mpn := getProductField(product, "mpn"); mpn != "" {
 			xml.WriteString(fmt.Sprintf("      <g:mpn><![CDATA[%v]]></g:mpn>\n", mpn))
 		}
-		
+
 		if category := getProductField(product, "category"); category != "" {
 			xml.WriteString(fmt.Sprintf("      <g:google_product_category><![CDATA[%v]]></g:google_product_category>\n", category))
 		}
-		
+
 		if productType := getProductField(product, "product_type"); productType != "" {
 			xml.WriteString(fmt.Sprintf("      <g:product_type><![CDATA[%v]]></g:product_type>\n", productType))
 		}
-		
+
 		// Additional images
 		if images := getProductImages(product); len(images) > 1 {
 			for i := 1; i < len(images) && i < 11; i++ { // Max 10 additional images
 				xml.WriteString(fmt.Sprintf("      <g:additional_image_link><![CDATA[%v]]></g:additional_image_link>\n", images[i]))
 			}
 		}
-		
+
 		xml.WriteString("    </item>\n")
 	}
-	
+
 	xml.WriteString("  </channel>\n</rss>")
 	return xml.String()
 }
@@ -7595,7 +7502,7 @@ func generateGoogleShoppingXML(products []map[string]interface{}) string {
 // generateFacebookCSV generates Facebook/Instagram CSV feed
 func generateFacebookCSV(products []map[string]interface{}) string {
 	var csv strings.Builder
-	
+
 	// CSV Header - Facebook required fields
 	headers := []string{
 		"id", "title", "description", "availability", "condition", "price",
@@ -7604,9 +7511,9 @@ func generateFacebookCSV(products []map[string]interface{}) string {
 		"item_group_id", "gender", "color", "size", "age_group", "material",
 		"pattern", "shipping", "shipping_weight", "additional_image_link",
 	}
-	
+
 	csv.WriteString(strings.Join(headers, ",") + "\n")
-	
+
 	for _, product := range products {
 		row := []string{
 			escapeCSV(getProductField(product, "external_id")),
@@ -7636,7 +7543,7 @@ func generateFacebookCSV(products []map[string]interface{}) string {
 		}
 		csv.WriteString(strings.Join(row, ",") + "\n")
 	}
-	
+
 	return csv.String()
 }
 
@@ -7659,16 +7566,16 @@ func generateInstagramJSON(products []map[string]interface{}) string {
 		Size             string   `json:"size,omitempty"`
 		AgeGroup         string   `json:"age_group,omitempty"`
 	}
-	
+
 	var instagramProducts []InstagramProduct
-	
+
 	for _, product := range products {
 		images := getProductImages(product)
 		additionalImages := []string{}
 		if len(images) > 1 {
 			additionalImages = images[1:]
 		}
-		
+
 		instagramProducts = append(instagramProducts, InstagramProduct{
 			ID:               fmt.Sprintf("%v", getProductField(product, "external_id")),
 			Title:            fmt.Sprintf("%v", getProductField(product, "title")),
@@ -7687,16 +7594,16 @@ func generateInstagramJSON(products []map[string]interface{}) string {
 			AgeGroup:         fmt.Sprintf("%v", getProductField(product, "age_group")),
 		})
 	}
-	
+
 	jsonData, err := json.MarshalIndent(map[string]interface{}{
-		"version": "1.0",
+		"version":  "1.0",
 		"products": instagramProducts,
 	}, "", "  ")
-	
+
 	if err != nil {
 		return "{\"error\": \"Failed to generate JSON feed\"}"
 	}
-	
+
 	return string(jsonData)
 }
 
@@ -7739,7 +7646,7 @@ func getProductImages(product map[string]interface{}) []string {
 	if !ok || imagesVal == nil {
 		return []string{}
 	}
-	
+
 	// Handle JSON string array
 	if imagesStr, ok := imagesVal.(string); ok {
 		var images []string
@@ -7751,7 +7658,7 @@ func getProductImages(product map[string]interface{}) []string {
 			return []string{imagesStr}
 		}
 	}
-	
+
 	// Handle slice
 	if imagesSlice, ok := imagesVal.([]interface{}); ok {
 		var images []string
@@ -7762,7 +7669,7 @@ func getProductImages(product map[string]interface{}) []string {
 		}
 		return images
 	}
-	
+
 	return []string{}
 }
 
@@ -7779,21 +7686,21 @@ func getAdditionalImagesCSV(product map[string]interface{}) string {
 func getProductAvailability(product map[string]interface{}) string {
 	status := strings.ToLower(getProductField(product, "status"))
 	stockQty := getProductField(product, "stock_quantity")
-	
+
 	if status == "active" || status == "published" {
 		if stockQty != "" && stockQty != "0" {
 			return "in stock"
 		}
 		return "out of stock"
 	}
-	
+
 	return "out of stock"
 }
 
 // getProductCondition gets product condition
 func getProductCondition(product map[string]interface{}) string {
 	condition := strings.ToLower(getProductField(product, "condition"))
-	
+
 	switch condition {
 	case "new", "refurbished", "used":
 		return condition
@@ -7813,10 +7720,10 @@ func escapeCSV(field string) string {
 // validateGoogleShoppingFeed validates Google Shopping feed requirements
 func validateGoogleShoppingFeed(product map[string]interface{}) []string {
 	var errors []string
-	
+
 	// Required fields
 	requiredFields := []string{"id", "title", "description", "link", "image_link", "price", "availability", "condition"}
-	
+
 	for _, field := range requiredFields {
 		var value string
 		switch field {
@@ -7833,30 +7740,30 @@ func validateGoogleShoppingFeed(product map[string]interface{}) []string {
 		default:
 			value = getProductField(product, field)
 		}
-		
+
 		if value == "" {
 			errors = append(errors, fmt.Sprintf("Missing required field: %s", field))
 		}
 	}
-	
+
 	// Check for at least one unique identifier (GTIN, MPN, or Brand)
 	gtin := getProductField(product, "gtin")
 	mpn := getProductField(product, "mpn")
 	brand := getProductField(product, "brand")
-	
+
 	if gtin == "" && (mpn == "" || brand == "") {
 		errors = append(errors, "Product must have GTIN, or both MPN and Brand")
 	}
-	
+
 	return errors
 }
 
 // validateFacebookFeed validates Facebook feed requirements
 func validateFacebookFeed(product map[string]interface{}) []string {
 	var errors []string
-	
+
 	requiredFields := []string{"id", "title", "description", "availability", "condition", "price", "link", "image_link"}
-	
+
 	for _, field := range requiredFields {
 		var value string
 		switch field {
@@ -7873,16 +7780,16 @@ func validateFacebookFeed(product map[string]interface{}) []string {
 		default:
 			value = getProductField(product, field)
 		}
-		
+
 		if value == "" {
 			errors = append(errors, fmt.Sprintf("Missing required field: %s", field))
 		}
 	}
-	
+
 	return errors
 }
 
 // This function is required by Vercel
 func main() {
-        // This won't be called in Vercel, but required for Go compilation
+	// This won't be called in Vercel, but required for Go compilation
 }
