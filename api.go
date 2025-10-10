@@ -5376,9 +5376,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var history []map[string]interface{}
 				for rows.Next() {
-					var id, status, errorMessage, fileURL, fileFormat, startedAt string
-					var productsProcessed, productsIncluded, productsExcluded, generationTimeMs, fileSizeBytes int
-					var completedAt sql.NullString
+					var id, status string
+					var productsProcessed, productsIncluded, productsExcluded, generationTimeMs int
+					var fileSizeBytes int64
+					var errorMessage, fileURL, fileFormat sql.NullString
+					var startedAt, completedAt sql.NullString
 
 					err := rows.Scan(&id, &status, &productsProcessed, &productsIncluded, &productsExcluded, &generationTimeMs, &fileSizeBytes, &errorMessage, &fileURL, &fileFormat, &startedAt, &completedAt)
 					if err != nil {
@@ -5394,10 +5396,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"productsExcluded":  productsExcluded,
 						"generationTimeMs":  generationTimeMs,
 						"fileSizeBytes":     fileSizeBytes,
-						"errorMessage":      errorMessage,
-						"fileURL":           fileURL,
-						"fileFormat":        fileFormat,
-						"startedAt":         startedAt,
+						"errorMessage":      errorMessage.String,
+						"fileURL":           fileURL.String,
+						"fileFormat":        fileFormat.String,
+						"startedAt":         startedAt.String,
 						"completedAt":       completedAt.String,
 					})
 				}
