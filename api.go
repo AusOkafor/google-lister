@@ -1,4 +1,4 @@
-﻿package handler
+package handler
 
 import (
 	"crypto/hmac"
@@ -4382,11 +4382,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				go func() {
 					startTime := time.Now()
 
-					// Fetch products from database
+					// Fetch products from database, exclude out of stock
 					query := `
 						SELECT id, external_id, title, description, price, currency, sku, 
-						       brand, category, images, status
+						       brand, category, images, status, metadata
 						FROM products 
+						WHERE status NOT IN ('OUT_OF_STOCK', 'ARCHIVED', 'DRAFT')
 						ORDER BY created_at DESC
 					`
 
@@ -4411,12 +4412,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					for rows.Next() {
 						var product map[string]interface{} = make(map[string]interface{})
 						var id, externalID, title, description, currency, brand, category, images, status string
-						var sku sql.NullString
+						var sku, metadata sql.NullString
 						var price float64
 
 						err := rows.Scan(
 							&id, &externalID, &title, &description, &price, &currency, &sku,
-							&brand, &category, &images, &status,
+							&brand, &category, &images, &status, &metadata,
 						)
 
 						if err != nil {
@@ -4437,6 +4438,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						product["category"] = category
 						product["images"] = images
 						product["status"] = status
+						product["metadata"] = metadata.String
 						// Set defaults for optional fields
 						product["condition"] = "new"
 						product["stock_quantity"] = 0
@@ -4543,11 +4545,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Fetch products with available fields
+				// Fetch products with available fields, exclude out of stock
 				query := `
 					SELECT id, external_id, title, description, price, currency, sku, 
-					       brand, category, images, status
+					       brand, category, images, status, metadata
 					FROM products 
+					WHERE status NOT IN ('OUT_OF_STOCK', 'ARCHIVED', 'DRAFT')
 					ORDER BY created_at DESC
 				`
 
@@ -4563,12 +4566,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				for rows.Next() {
 					var product map[string]interface{} = make(map[string]interface{})
 					var id, externalID, title, description, currency, brand, category, images, status string
-					var sku sql.NullString
+					var sku, metadata sql.NullString
 					var price float64
 
 					err := rows.Scan(
 						&id, &externalID, &title, &description, &price, &currency, &sku,
-						&brand, &category, &images, &status,
+						&brand, &category, &images, &status, &metadata,
 					)
 
 					if err != nil {
@@ -4587,6 +4590,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					product["category"] = category
 					product["images"] = images
 					product["status"] = status
+					product["metadata"] = metadata.String
 					// Set defaults for optional fields
 					product["condition"] = "new"
 					product["stock_quantity"] = 0
@@ -5176,11 +5180,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Get sample products with available fields
-				// First, try to get products without organization filter to see if any exist
+				// Exclude out of stock products and include metadata for handle
 				query := `
 					SELECT id, external_id, title, description, price, currency, sku, 
-					       brand, category, images, status
+					       brand, category, images, status, metadata
 					FROM products 
+					WHERE status NOT IN ('OUT_OF_STOCK', 'ARCHIVED', 'DRAFT')
 					ORDER BY created_at DESC 
 					LIMIT $1
 				`
@@ -5200,12 +5205,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					rowCount++
 					var product map[string]interface{} = make(map[string]interface{})
 					var id, externalID, title, description, currency, brand, category, images, status string
-					var sku sql.NullString
+					var sku, metadata sql.NullString
 					var price float64
 
 					err := rows.Scan(
 						&id, &externalID, &title, &description, &price, &currency, &sku,
-						&brand, &category, &images, &status,
+						&brand, &category, &images, &status, &metadata,
 					)
 
 					if err != nil {
@@ -5224,6 +5229,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					product["category"] = category
 					product["images"] = images
 					product["status"] = status
+					product["metadata"] = metadata.String
 					// Set defaults for optional fields
 					product["condition"] = "new"
 					product["stock_quantity"] = 0
@@ -7521,23 +7527,62 @@ func getProductLink(product map[string]interface{}) string {
 		return link
 	}
 
-	// TODO: In production, this should come from the organization's settings
-	// where each user/store has their own shop URL stored in the database
-	// For now, use development store
-	baseURL := "https://austus-themes.myshopify.com/products"
-
-	// Ensure baseURL ends with /
-	if !strings.HasSuffix(baseURL, "/") {
-		baseURL += "/"
+	// Check metadata for handle
+	if metadata, ok := product["metadata"]; ok {
+		if metadataMap, ok := metadata.(map[string]interface{}); ok {
+			if handle, ok := metadataMap["handle"].(string); ok && handle != "" {
+				return "https://austus-themes.myshopify.com/products/" + handle
+			}
+		}
+		// Try parsing as JSON string
+		if metadataStr, ok := metadata.(string); ok && metadataStr != "" {
+			var metadataMap map[string]interface{}
+			if err := json.Unmarshal([]byte(metadataStr), &metadataMap); err == nil {
+				if handle, ok := metadataMap["handle"].(string); ok && handle != "" {
+					return "https://austus-themes.myshopify.com/products/" + handle
+				}
+			}
+		}
 	}
 
+	// Generate handle from title as fallback
+	title := getProductField(product, "title")
+	if title != "" {
+		handle := generateHandle(title)
+		return "https://austus-themes.myshopify.com/products/" + handle
+	}
+
+	// Last resort: use external_id
 	if id := getProductField(product, "external_id"); id != "" {
-		return baseURL + id
+		return "https://austus-themes.myshopify.com/products/" + id
 	}
-	if id := getProductField(product, "id"); id != "" {
-		return baseURL + id
+
+	return "https://austus-themes.myshopify.com/products"
+}
+
+// generateHandle creates a URL-friendly handle from a title
+func generateHandle(title string) string {
+	// Convert to lowercase
+	handle := strings.ToLower(title)
+	// Remove quotes and special characters
+	handle = strings.Trim(handle, "\"'")
+	// Replace spaces and special chars with hyphens
+	handle = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		if r == ' ' || r == '-' || r == '_' {
+			return '-'
+		}
+		return -1
+	}, handle)
+	// Remove consecutive hyphens
+	for strings.Contains(handle, "--") {
+		handle = strings.ReplaceAll(handle, "--", "-")
 	}
-	return baseURL
+	// Trim hyphens from start/end
+	handle = strings.Trim(handle, "-")
+	return handle
 }
 
 // getProductImage gets the first product image
