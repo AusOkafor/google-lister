@@ -5064,24 +5064,32 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				feedID := c.Param("id")
 				organizationID := "00000000-0000-0000-0000-000000000000"
 
-				var req map[string]interface{}
+				var req struct {
+					Enabled bool     `json:"enabled"`
+					URL     string   `json:"url"`
+					Events  []string `json:"events"`
+				}
+
 				if err := c.ShouldBindJSON(&req); err != nil {
+					log.Printf("Failed to bind webhook request: %v", err)
 					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 					return
 				}
 
-				enabled := req["enabled"].(bool)
-				url := req["url"].(string)
-				events := req["events"].([]interface{})
-
-				eventsJSON, _ := json.Marshal(events)
+				// Convert events array to PostgreSQL array format
+				var eventsArray string
+				if len(req.Events) > 0 {
+					eventsArray = "{" + strings.Join(req.Events, ",") + "}"
+				} else {
+					eventsArray = "{feed.generated,feed.failed}"
+				}
 
 				// Upsert webhook - first try to update, then insert if doesn't exist
 				result, err := db.Exec(`
 					UPDATE feed_webhooks 
 					SET url = $1, enabled = $2, events = $3, updated_at = NOW()
 					WHERE feed_id = $4 AND organization_id = $5
-				`, url, enabled, string(eventsJSON), feedID, organizationID)
+				`, req.URL, req.Enabled, eventsArray, feedID, organizationID)
 
 				if err != nil {
 					log.Printf("Failed to update webhook: %v", err)
@@ -5095,13 +5103,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					_, err = db.Exec(`
 						INSERT INTO feed_webhooks (feed_id, organization_id, url, enabled, events)
 						VALUES ($1, $2, $3, $4, $5)
-					`, feedID, organizationID, url, enabled, string(eventsJSON))
-				}
+					`, feedID, organizationID, req.URL, req.Enabled, eventsArray)
 
-				if err != nil {
-					log.Printf("Failed to update webhook: %v", err)
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update webhook"})
-					return
+					if err != nil {
+						log.Printf("Failed to insert webhook: %v", err)
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to insert webhook"})
+						return
+					}
 				}
 
 				c.JSON(http.StatusOK, gin.H{"message": "Webhook updated successfully"})
