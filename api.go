@@ -5193,7 +5193,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				defer rows.Close()
 
 				var products []map[string]interface{}
+				rowCount := 0
 				for rows.Next() {
+					rowCount++
 					var product map[string]interface{} = make(map[string]interface{})
 					var id, externalID, title, description, currency, sku, brand, category, images, status string
 					var price float64
@@ -5204,7 +5206,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					)
 
 					if err != nil {
-						log.Printf("Error scanning product for preview: %v", err)
+						log.Printf("Error scanning product row %d for preview: %v", rowCount, err)
 						continue
 					}
 
@@ -5224,7 +5226,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					product["stock_quantity"] = 0
 
 					products = append(products, product)
+					log.Printf("Successfully scanned product %d: %s", rowCount, externalID)
 				}
+
+				log.Printf("Feed preview: scanned %d rows, added %d products", rowCount, len(products))
 
 				// Generate preview content based on format
 				var previewContent string
