@@ -4387,11 +4387,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						SELECT id, external_id, title, description, price, currency, sku, 
 						       brand, category, images, status
 						FROM products 
-						WHERE organization_id = $1
 						ORDER BY created_at DESC
 					`
 
-					rows, err := db.Query(query, organizationID)
+					rows, err := db.Query(query)
 					if err != nil {
 						log.Printf("Failed to fetch products: %v", err)
 						db.Exec(`UPDATE product_feeds SET status = 'error', updated_at = NOW() WHERE id = $1`, feedID)
@@ -4548,11 +4547,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					SELECT id, external_id, title, description, price, currency, sku, 
 					       brand, category, images, status
 					FROM products 
-					WHERE organization_id = $1
 					ORDER BY created_at DESC
 				`
 
-				rows, err := db.Query(query, organizationID)
+				rows, err := db.Query(query)
 				if err != nil {
 					log.Printf("Failed to fetch products for download: %v", err)
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
@@ -5176,20 +5174,20 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Get sample products with available fields
+				// First, try to get products without organization filter to see if any exist
 				query := `
 					SELECT id, external_id, title, description, price, currency, sku, 
 					       brand, category, images, status
 					FROM products 
-					WHERE organization_id = $1
 					ORDER BY created_at DESC 
-					LIMIT $2
+					LIMIT $1
 				`
 
-				rows, err := db.Query(query, organizationID, limitInt)
+				rows, err := db.Query(query, limitInt)
 
 				if err != nil {
 					log.Printf("Failed to fetch products for preview: %v", err)
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
+					c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Database query failed: %v", err)})
 					return
 				}
 				defer rows.Close()
