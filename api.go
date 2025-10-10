@@ -4866,7 +4866,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				rows, err := db.Query(query, args...)
 				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch templates"})
+					log.Printf("Error fetching templates from database: %v", err)
+					// Fallback to default templates
+					templates := getDefaultTemplates()
+					if channel != "" {
+						templates = filterTemplatesByChannel(templates, channel)
+					}
+					c.JSON(http.StatusOK, gin.H{"data": templates})
 					return
 				}
 				defer rows.Close()
@@ -4893,6 +4899,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"isSystemTemplate": isSystemTemplate,
 						"isActive":         isActive,
 					})
+				}
+
+				// If no templates found in database, return default templates
+				if len(templates) == 0 {
+					log.Printf("No templates found in database, returning default templates")
+					templates = getDefaultTemplates()
+					if channel != "" {
+						templates = filterTemplatesByChannel(templates, channel)
+					}
 				}
 
 				c.JSON(http.StatusOK, gin.H{
@@ -7171,7 +7186,62 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	router.ServeHTTP(w, r)
 }
 
+// Helper functions for feed templates
+
+// getDefaultTemplates returns default feed templates
+func getDefaultTemplates() []map[string]interface{} {
+	return []map[string]interface{}{
+		{
+			"id":               "google-shopping-standard",
+			"name":             "Google Shopping Standard",
+			"description":      "Standard XML feed for Google Merchant Center with required fields",
+			"channel":          "Google Shopping",
+			"format":           "xml",
+			"fieldMapping":     `{"id": "product.external_id", "title": "product.title", "description": "product.description", "link": "product.link", "image_link": "product.images[0]", "price": "product.price", "availability": "product.availability", "brand": "product.brand", "gtin": "product.gtin", "mpn": "product.mpn", "condition": "product.condition"}`,
+			"filters":          `{}`,
+			"transformations":  `{}`,
+			"isSystemTemplate": true,
+			"isActive":         true,
+		},
+		{
+			"id":               "facebook-catalog-standard",
+			"name":             "Facebook Catalog Standard",
+			"description":      "Standard CSV feed for Facebook Catalog with essential fields",
+			"channel":          "Facebook",
+			"format":           "csv",
+			"fieldMapping":     `{"id": "product.external_id", "title": "product.title", "description": "product.description", "image_link": "product.images[0]", "link": "product.link", "price": "product.price", "brand": "product.brand", "availability": "product.availability", "condition": "product.condition"}`,
+			"filters":          `{}`,
+			"transformations":  `{}`,
+			"isSystemTemplate": true,
+			"isActive":         true,
+		},
+		{
+			"id":               "instagram-shopping-standard",
+			"name":             "Instagram Shopping Standard",
+			"description":      "Standard JSON feed for Instagram Shopping with required fields",
+			"channel":          "Instagram",
+			"format":           "json",
+			"fieldMapping":     `{"id": "product.external_id", "title": "product.title", "description": "product.description", "image_link": "product.images[0]", "link": "product.link", "price": "product.price", "brand": "product.brand", "availability": "product.availability", "condition": "product.condition"}`,
+			"filters":          `{}`,
+			"transformations":  `{}`,
+			"isSystemTemplate": true,
+			"isActive":         true,
+		},
+	}
+}
+
+// filterTemplatesByChannel filters templates by channel
+func filterTemplatesByChannel(templates []map[string]interface{}, channel string) []map[string]interface{} {
+	var filtered []map[string]interface{}
+	for _, template := range templates {
+		if template["channel"] == channel {
+			filtered = append(filtered, template)
+		}
+	}
+	return filtered
+}
+
 // This function is required by Vercel
 func main() {
-	// This won't be called in Vercel, but required for Go compilation
+        // This won't be called in Vercel, but required for Go compilation
 }
