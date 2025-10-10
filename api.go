@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -2753,6 +2754,72 @@ func generateRandomString(length int) string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(bytes)[:length]
+}
+
+// Helper functions for extracting values from map[string]interface{}
+func getStringFromMap(m map[string]interface{}, key string, defaultValue string) string {
+	if val, ok := m[key]; ok {
+		if strVal, ok := val.(string); ok && strVal != "" {
+			return strVal
+		}
+	}
+	return defaultValue
+}
+
+func getIntFromMap(m map[string]interface{}, key string, defaultValue int) int {
+	if val, ok := m[key]; ok {
+		switch v := val.(type) {
+		case int:
+			if v != 0 {
+				return v
+			}
+		case float64:
+			if v != 0 {
+				return int(v)
+			}
+		}
+	}
+	return defaultValue
+}
+
+func getFloatFromMap(m map[string]interface{}, key string, defaultValue float64) float64 {
+	if val, ok := m[key]; ok {
+		if floatVal, ok := val.(float64); ok && floatVal != 0 {
+			return floatVal
+		}
+	}
+	return defaultValue
+}
+
+func getBoolPtrFromMap(m map[string]interface{}, key string) *bool {
+	if val, ok := m[key]; ok {
+		if boolVal, ok := val.(bool); ok {
+			return &boolVal
+		}
+	}
+	return nil
+}
+
+// SQL null helpers
+func nullString(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func nullInt(i int) interface{} {
+	if i == 0 {
+		return nil
+	}
+	return i
+}
+
+func nullFloat(f float64) interface{} {
+	if f == 0.0 {
+		return nil
+	}
+	return f
 }
 
 func Handler(w http.ResponseWriter, r *http.Request) {
@@ -6133,19 +6200,84 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 		// Get AI Settings
 		optimizer.GET("/settings", func(c *gin.Context) {
+			// Fetch settings from ai_settings table
+			var settings struct {
+				ID                      string  `db:"id" json:"id"`
+				OrganizationID          string  `db:"organization_id" json:"organization_id"`
+				DefaultModel            string  `db:"default_model" json:"default_model"`
+				MaxTokens               int     `db:"max_tokens" json:"max_tokens"`
+				Temperature             float64 `db:"temperature" json:"temperature"`
+				TopP                    float64 `db:"top_p" json:"top_p"`
+				TitleOptimization       bool    `db:"title_optimization" json:"title_optimization"`
+				DescriptionOptimization bool    `db:"description_optimization" json:"description_optimization"`
+				CategoryOptimization    bool    `db:"category_optimization" json:"category_optimization"`
+				ImageOptimization       bool    `db:"image_optimization" json:"image_optimization"`
+				MinScoreThreshold       int     `db:"min_score_threshold" json:"min_score_threshold"`
+				RequireApproval         bool    `db:"require_approval" json:"require_approval"`
+				MaxRetries              int     `db:"max_retries" json:"max_retries"`
+			}
+
+			query := `
+				SELECT 
+					id, organization_id, default_model, max_tokens, temperature, top_p,
+					title_optimization, description_optimization, category_optimization, 
+					image_optimization, min_score_threshold, require_approval, max_retries
+				FROM ai_settings
+				WHERE organization_id = $1
+				LIMIT 1
+			`
+			orgID := "00000000-0000-0000-0000-000000000000"
+
+			err := db.QueryRow(query, orgID).Scan(
+				&settings.ID,
+				&settings.OrganizationID,
+				&settings.DefaultModel,
+				&settings.MaxTokens,
+				&settings.Temperature,
+				&settings.TopP,
+				&settings.TitleOptimization,
+				&settings.DescriptionOptimization,
+				&settings.CategoryOptimization,
+				&settings.ImageOptimization,
+				&settings.MinScoreThreshold,
+				&settings.RequireApproval,
+				&settings.MaxRetries,
+			)
+
+			if err != nil {
+				log.Printf("Error fetching AI settings: %v", err)
+				// Return defaults if not found
+				c.JSON(http.StatusOK, gin.H{
+					"data": gin.H{
+						"default_model":            "gpt-3.5-turbo",
+						"max_tokens":               500,
+						"temperature":              0.7,
+						"top_p":                    0.9,
+						"title_optimization":       true,
+						"description_optimization": true,
+						"category_optimization":    true,
+						"image_optimization":       false,
+						"min_score_threshold":      80,
+						"require_approval":         true,
+						"max_retries":              3,
+					},
+				})
+				return
+			}
+
 			c.JSON(http.StatusOK, gin.H{
 				"data": gin.H{
-					"default_model":            "gpt-3.5-turbo",
-					"max_tokens":               500,
-					"temperature":              0.7,
-					"top_p":                    0.9,
-					"title_optimization":       true,
-					"description_optimization": true,
-					"category_optimization":    true,
-					"image_optimization":       true,
-					"min_score_threshold":      80,
-					"require_approval":         true,
-					"max_retries":              3,
+					"default_model":            settings.DefaultModel,
+					"max_tokens":               settings.MaxTokens,
+					"temperature":              settings.Temperature,
+					"top_p":                    settings.TopP,
+					"title_optimization":       settings.TitleOptimization,
+					"description_optimization": settings.DescriptionOptimization,
+					"category_optimization":    settings.CategoryOptimization,
+					"image_optimization":       settings.ImageOptimization,
+					"min_score_threshold":      settings.MinScoreThreshold,
+					"require_approval":         settings.RequireApproval,
+					"max_retries":              settings.MaxRetries,
 				},
 			})
 		})
@@ -6155,6 +6287,62 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			var req map[string]interface{}
 			if err := c.ShouldBindJSON(&req); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+				return
+			}
+
+			orgID := "00000000-0000-0000-0000-000000000000"
+
+			// Build update query dynamically based on provided fields
+			updateQuery := `
+				UPDATE ai_settings
+				SET 
+					default_model = COALESCE($1, default_model),
+					max_tokens = COALESCE($2, max_tokens),
+					temperature = COALESCE($3, temperature),
+					top_p = COALESCE($4, top_p),
+					title_optimization = COALESCE($5, title_optimization),
+					description_optimization = COALESCE($6, description_optimization),
+					category_optimization = COALESCE($7, category_optimization),
+					image_optimization = COALESCE($8, image_optimization),
+					min_score_threshold = COALESCE($9, min_score_threshold),
+					require_approval = COALESCE($10, require_approval),
+					max_retries = COALESCE($11, max_retries),
+					updated_at = NOW()
+				WHERE organization_id = $12
+			`
+
+			// Extract values with defaults
+			defaultModel := getStringFromMap(req, "default_model", "")
+			maxTokens := getIntFromMap(req, "max_tokens", 0)
+			temperature := getFloatFromMap(req, "temperature", 0.0)
+			topP := getFloatFromMap(req, "top_p", 0.0)
+			titleOpt := getBoolPtrFromMap(req, "title_optimization")
+			descOpt := getBoolPtrFromMap(req, "description_optimization")
+			catOpt := getBoolPtrFromMap(req, "category_optimization")
+			imgOpt := getBoolPtrFromMap(req, "image_optimization")
+			minScore := getIntFromMap(req, "min_score_threshold", 0)
+			requireApproval := getBoolPtrFromMap(req, "require_approval")
+			maxRetries := getIntFromMap(req, "max_retries", 0)
+
+			// Execute update
+			_, err := db.Exec(updateQuery,
+				nullString(defaultModel),
+				nullInt(maxTokens),
+				nullFloat(temperature),
+				nullFloat(topP),
+				titleOpt,
+				descOpt,
+				catOpt,
+				imgOpt,
+				nullInt(minScore),
+				requireApproval,
+				nullInt(maxRetries),
+				orgID,
+			)
+
+			if err != nil {
+				log.Printf("Error updating AI settings: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update settings"})
 				return
 			}
 
