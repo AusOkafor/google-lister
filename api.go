@@ -4385,8 +4385,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					// Fetch products from database
 					query := `
 						SELECT id, external_id, title, description, price, currency, sku, 
-						       brand, category, images, status, stock_quantity, condition,
-						       gtin, mpn, gender, color, size, age_group, material, pattern, weight
+						       brand, category, images, status
 						FROM products 
 						WHERE organization_id = $1 AND status = 'ACTIVE'
 						ORDER BY created_at DESC
@@ -4413,13 +4412,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					for rows.Next() {
 						var product map[string]interface{} = make(map[string]interface{})
 						var id, externalID, title, description, currency, sku, brand, category, images, status string
-						var price, stockQuantity float64
-						var condition, gtin, mpn, gender, color, size, ageGroup, material, pattern, weight sql.NullString
+						var price float64
 
 						err := rows.Scan(
 							&id, &externalID, &title, &description, &price, &currency, &sku,
-							&brand, &category, &images, &status, &stockQuantity, &condition,
-							&gtin, &mpn, &gender, &color, &size, &ageGroup, &material, &pattern, &weight,
+							&brand, &category, &images, &status,
 						)
 
 						if err != nil {
@@ -4440,51 +4437,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						product["category"] = category
 						product["images"] = images
 						product["status"] = status
-						product["stock_quantity"] = stockQuantity
-						if condition.Valid {
-							product["condition"] = condition.String
-						}
-						if gtin.Valid {
-							product["gtin"] = gtin.String
-						}
-						if mpn.Valid {
-							product["mpn"] = mpn.String
-						}
-						if gender.Valid {
-							product["gender"] = gender.String
-						}
-						if color.Valid {
-							product["color"] = color.String
-						}
-						if size.Valid {
-							product["size"] = size.String
-						}
-						if ageGroup.Valid {
-							product["age_group"] = ageGroup.String
-						}
-						if material.Valid {
-							product["material"] = material.String
-						}
-						if pattern.Valid {
-							product["pattern"] = pattern.String
-						}
-						if weight.Valid {
-							product["weight"] = weight.String
-						}
-
-						// Validate product based on channel
-						var validationErrors []string
-						if channel == "Google Shopping" {
-							validationErrors = validateGoogleShoppingFeed(product)
-						} else if channel == "Facebook" || channel == "Instagram" {
-							validationErrors = validateFacebookFeed(product)
-						}
-
-						if len(validationErrors) > 0 {
-							log.Printf("Product %s validation failed: %v", externalID, validationErrors)
-							productsExcluded++
-							continue
-						}
+						// Set defaults for optional fields
+						product["condition"] = "new"
+						product["stock_quantity"] = 0
 
 						products = append(products, product)
 						productsIncluded++
@@ -4588,11 +4543,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Fetch products with all required fields
+				// Fetch products with available fields
 				query := `
 					SELECT id, external_id, title, description, price, currency, sku, 
-					       brand, category, images, status, stock_quantity, condition,
-					       gtin, mpn, gender, color, size, age_group, material, pattern, weight
+					       brand, category, images, status
 					FROM products 
 					WHERE organization_id = $1 AND status = 'ACTIVE'
 					ORDER BY created_at DESC
@@ -4610,13 +4564,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				for rows.Next() {
 					var product map[string]interface{} = make(map[string]interface{})
 					var id, externalID, title, description, currency, sku, brand, category, images, status string
-					var price, stockQuantity float64
-					var condition, gtin, mpn, gender, color, size, ageGroup, material, pattern, weight sql.NullString
+					var price float64
 
 					err := rows.Scan(
 						&id, &externalID, &title, &description, &price, &currency, &sku,
-						&brand, &category, &images, &status, &stockQuantity, &condition,
-						&gtin, &mpn, &gender, &color, &size, &ageGroup, &material, &pattern, &weight,
+						&brand, &category, &images, &status,
 					)
 
 					if err != nil {
@@ -4635,49 +4587,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					product["category"] = category
 					product["images"] = images
 					product["status"] = status
-					product["stock_quantity"] = stockQuantity
-					if condition.Valid {
-						product["condition"] = condition.String
-					}
-					if gtin.Valid {
-						product["gtin"] = gtin.String
-					}
-					if mpn.Valid {
-						product["mpn"] = mpn.String
-					}
-					if gender.Valid {
-						product["gender"] = gender.String
-					}
-					if color.Valid {
-						product["color"] = color.String
-					}
-					if size.Valid {
-						product["size"] = size.String
-					}
-					if ageGroup.Valid {
-						product["age_group"] = ageGroup.String
-					}
-					if material.Valid {
-						product["material"] = material.String
-					}
-					if pattern.Valid {
-						product["pattern"] = pattern.String
-					}
-					if weight.Valid {
-						product["weight"] = weight.String
-					}
+					// Set defaults for optional fields
+					product["condition"] = "new"
+					product["stock_quantity"] = 0
 
-					// Validate product based on channel
-					var validationErrors []string
-					if channel == "Google Shopping" {
-						validationErrors = validateGoogleShoppingFeed(product)
-					} else if channel == "Facebook" || channel == "Instagram" {
-						validationErrors = validateFacebookFeed(product)
-					}
-
-					if len(validationErrors) == 0 {
-						products = append(products, product)
-					}
+					products = append(products, product)
 				}
 
 				// Generate feed content based on format
@@ -5261,11 +5175,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Get sample products with all fields
+				// Get sample products with available fields
 				query := `
 					SELECT id, external_id, title, description, price, currency, sku, 
-					       brand, category, images, status, stock_quantity, condition,
-					       gtin, mpn, gender, color, size, age_group, material, pattern, weight
+					       brand, category, images, status
 					FROM products 
 					WHERE organization_id = $1 AND status = 'ACTIVE'
 					ORDER BY created_at DESC 
@@ -5285,13 +5198,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				for rows.Next() {
 					var product map[string]interface{} = make(map[string]interface{})
 					var id, externalID, title, description, currency, sku, brand, category, images, status string
-					var price, stockQuantity float64
-					var condition, gtin, mpn, gender, color, size, ageGroup, material, pattern, weight sql.NullString
+					var price float64
 
 					err := rows.Scan(
 						&id, &externalID, &title, &description, &price, &currency, &sku,
-						&brand, &category, &images, &status, &stockQuantity, &condition,
-						&gtin, &mpn, &gender, &color, &size, &ageGroup, &material, &pattern, &weight,
+						&brand, &category, &images, &status,
 					)
 
 					if err != nil {
@@ -5310,37 +5221,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					product["category"] = category
 					product["images"] = images
 					product["status"] = status
-					product["stock_quantity"] = stockQuantity
-					if condition.Valid {
-						product["condition"] = condition.String
-					}
-					if gtin.Valid {
-						product["gtin"] = gtin.String
-					}
-					if mpn.Valid {
-						product["mpn"] = mpn.String
-					}
-					if gender.Valid {
-						product["gender"] = gender.String
-					}
-					if color.Valid {
-						product["color"] = color.String
-					}
-					if size.Valid {
-						product["size"] = size.String
-					}
-					if ageGroup.Valid {
-						product["age_group"] = ageGroup.String
-					}
-					if material.Valid {
-						product["material"] = material.String
-					}
-					if pattern.Valid {
-						product["pattern"] = pattern.String
-					}
-					if weight.Valid {
-						product["weight"] = weight.String
-					}
+					// Set defaults for optional fields
+					product["condition"] = "new"
+					product["stock_quantity"] = 0
 
 					products = append(products, product)
 				}
