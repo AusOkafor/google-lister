@@ -5258,6 +5258,39 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				})
 			})
 
+			// Webhook Receiver Endpoint
+			// This endpoint can be used to receive webhooks from your own feeds
+			feeds.POST("/webhook-receiver", func(c *gin.Context) {
+				var payload map[string]interface{}
+				if err := c.ShouldBindJSON(&payload); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payload"})
+					return
+				}
+
+				// Log the webhook payload
+				event := payload["event"]
+				feedData := payload["feed"]
+				data := payload["data"]
+
+				log.Printf("Webhook received: event=%v, feed=%v", event, feedData)
+
+				// TODO: Add your custom webhook processing logic here
+				// Examples:
+				// - Send notification to Slack/Discord
+				// - Update external database
+				// - Trigger other processes
+				// - Send email alerts
+				// - Update analytics dashboard
+
+				// For now, just acknowledge receipt
+				c.JSON(http.StatusOK, gin.H{
+					"received": true,
+					"event":    event,
+					"message":  "Webhook received and logged",
+					"data":     data,
+				})
+			})
+
 			// Feed Statistics
 			feeds.GET("/stats", func(c *gin.Context) {
 				var stats struct {
