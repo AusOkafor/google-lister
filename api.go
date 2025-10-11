@@ -5269,27 +5269,204 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Log the webhook payload
 				event := payload["event"]
-				feedData := payload["feed"]
-				data := payload["data"]
+				feedData, _ := payload["feed"].(map[string]interface{})
+				data, _ := payload["data"].(map[string]interface{})
 
 				log.Printf("Webhook received: event=%v, feed=%v", event, feedData)
 
-				// TODO: Add your custom webhook processing logic here
-				// Examples:
-				// - Send notification to Slack/Discord
-				// - Update external database
-				// - Trigger other processes
-				// - Send email alerts
-				// - Update analytics dashboard
+				// Create system notification
+				var notifType, title, message string
+				var priority string = "normal"
 
-				// For now, just acknowledge receipt
+				switch event {
+				case "feed.generated":
+					notifType = "feed_generated"
+					title = fmt.Sprintf("Feed Generated: %v", feedData["name"])
+					productsIncluded := 0
+					if pi, ok := data["products_included"].(float64); ok {
+						productsIncluded = int(pi)
+					}
+					generationTime := 0.0
+					if gt, ok := data["generation_time_ms"].(float64); ok {
+						generationTime = gt / 1000.0
+					}
+					message = fmt.Sprintf("Successfully generated %d products in %.2fs", productsIncluded, generationTime)
+
+				case "feed.failed":
+					notifType = "feed_failed"
+					title = fmt.Sprintf("Feed Generation Failed: %v", feedData["name"])
+					errorMsg := "Unknown error"
+					if em, ok := data["error_message"].(string); ok {
+						errorMsg = em
+					}
+					message = fmt.Sprintf("Feed generation failed: %s", errorMsg)
+					priority = "high"
+				}
+
+				// Insert notification into database
+				metadataJSON, _ := json.Marshal(map[string]interface{}{
+					"event":     event,
+					"feed_data": feedData,
+					"data":      data,
+				})
+
+				_, err := db.Exec(`
+				INSERT INTO notifications (
+					organization_id, type, title, message, priority,
+					entity_type, entity_id, entity_name, metadata
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			`, "00000000-0000-0000-0000-000000000000", notifType, title, message, priority,
+					"feed", feedData["id"], feedData["name"], string(metadataJSON))
+
+				if err != nil {
+					log.Printf("Failed to create notification: %v", err)
+				}
+
 				c.JSON(http.StatusOK, gin.H{
 					"received": true,
 					"event":    event,
-					"message":  "Webhook received and logged",
+					"message":  "Webhook received and notification created",
 					"data":     data,
 				})
 			})
+
+			// Notifications API
+			notifications := api.Group("/notifications")
+			{
+				// Get all notifications
+				notifications.GET("/", func(c *gin.Context) {
+					organizationID := "00000000-0000-0000-0000-000000000000"
+					unreadOnly := c.Query("unread_only") == "true"
+					limit := c.DefaultQuery("limit", "50")
+
+					query := `
+					SELECT id, type, title, message, priority, is_read,
+					       entity_type, entity_id, entity_name, metadata,
+					       created_at, read_at
+					FROM notifications 
+					WHERE organization_id = $1 
+					  AND (expires_at IS NULL OR expires_at > NOW())
+				`
+
+					if unreadOnly {
+						query += " AND is_read = FALSE"
+					}
+
+					query += " ORDER BY created_at DESC LIMIT " + limit
+
+					rows, err := db.Query(query, organizationID)
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch notifications"})
+						return
+					}
+					defer rows.Close()
+
+					var notifs []map[string]interface{}
+					for rows.Next() {
+						var id, notifType, title, message, priority, entityType, entityID, entityName, metadata, createdAt string
+						var isRead bool
+						var readAt sql.NullString
+
+						err := rows.Scan(&id, &notifType, &title, &message, &priority, &isRead,
+							&entityType, &entityID, &entityName, &metadata, &createdAt, &readAt)
+						if err != nil {
+							continue
+						}
+
+						notifs = append(notifs, map[string]interface{}{
+							"id":         id,
+							"type":       notifType,
+							"title":      title,
+							"message":    message,
+							"priority":   priority,
+							"isRead":     isRead,
+							"entityType": entityType,
+							"entityId":   entityID,
+							"entityName": entityName,
+							"metadata":   metadata,
+							"createdAt":  createdAt,
+							"readAt":     readAt.String,
+						})
+					}
+
+					c.JSON(http.StatusOK, gin.H{"data": notifs})
+				})
+
+				// Get unread count
+				notifications.GET("/unread-count", func(c *gin.Context) {
+					organizationID := "00000000-0000-0000-0000-000000000000"
+
+					var count int
+					err := db.QueryRow(`
+					SELECT COUNT(*) FROM notifications 
+					WHERE organization_id = $1 
+					  AND is_read = FALSE 
+					  AND (expires_at IS NULL OR expires_at > NOW())
+				`, organizationID).Scan(&count)
+
+					if err != nil {
+						c.JSON(http.StatusOK, gin.H{"count": 0})
+						return
+					}
+
+					c.JSON(http.StatusOK, gin.H{"count": count})
+				})
+
+				// Mark as read
+				notifications.PUT("/:id/read", func(c *gin.Context) {
+					notifID := c.Param("id")
+					organizationID := "00000000-0000-0000-0000-000000000000"
+
+					_, err := db.Exec(`
+					UPDATE notifications 
+					SET is_read = TRUE, read_at = NOW()
+					WHERE id = $1 AND organization_id = $2
+				`, notifID, organizationID)
+
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to mark as read"})
+						return
+					}
+
+					c.JSON(http.StatusOK, gin.H{"message": "Marked as read"})
+				})
+
+				// Mark all as read
+				notifications.PUT("/mark-all-read", func(c *gin.Context) {
+					organizationID := "00000000-0000-0000-0000-000000000000"
+
+					_, err := db.Exec(`
+					UPDATE notifications 
+					SET is_read = TRUE, read_at = NOW()
+					WHERE organization_id = $1 AND is_read = FALSE
+				`, organizationID)
+
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to mark all as read"})
+						return
+					}
+
+					c.JSON(http.StatusOK, gin.H{"message": "All notifications marked as read"})
+				})
+
+				// Delete notification
+				notifications.DELETE("/:id", func(c *gin.Context) {
+					notifID := c.Param("id")
+					organizationID := "00000000-0000-0000-0000-000000000000"
+
+					_, err := db.Exec(`
+					DELETE FROM notifications 
+					WHERE id = $1 AND organization_id = $2
+				`, notifID, organizationID)
+
+					if err != nil {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete notification"})
+						return
+					}
+
+					c.JSON(http.StatusOK, gin.H{"message": "Notification deleted"})
+				})
+			}
 
 			// Feed Statistics
 			feeds.GET("/stats", func(c *gin.Context) {
