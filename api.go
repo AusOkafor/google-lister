@@ -5028,19 +5028,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				feedID := c.Param("id")
 				organizationID := "00000000-0000-0000-0000-000000000000"
 
-				var webhook struct {
-					ID      string   `db:"id"`
-					URL     string   `db:"url"`
-					Enabled bool     `db:"enabled"`
-					Events  []string `db:"events"`
-				}
+				var id, url, eventsArray string
+				var enabled bool
 
-				var eventsJSON string
 				err := db.QueryRow(`
 					SELECT id, url, enabled, events
 					FROM feed_webhooks 
 					WHERE feed_id = $1 AND organization_id = $2
-				`, feedID, organizationID).Scan(&webhook.ID, &webhook.URL, &webhook.Enabled, &eventsJSON)
+				`, feedID, organizationID).Scan(&id, &url, &enabled, &eventsArray)
 
 				if err != nil {
 					c.JSON(http.StatusOK, gin.H{
@@ -5053,11 +5048,24 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Parse events array
-				webhook.Events = []string{}
-				json.Unmarshal([]byte(eventsJSON), &webhook.Events)
+				// Parse PostgreSQL array format {event1,event2} to []string
+				events := []string{}
+				if eventsArray != "" {
+					// Remove curly braces
+					eventsArray = strings.Trim(eventsArray, "{}")
+					if eventsArray != "" {
+						events = strings.Split(eventsArray, ",")
+					}
+				}
 
-				c.JSON(http.StatusOK, gin.H{"data": webhook})
+				c.JSON(http.StatusOK, gin.H{
+					"data": gin.H{
+						"id":      id,
+						"url":     url,
+						"enabled": enabled,
+						"events":  events,
+					},
+				})
 			})
 
 			feeds.PUT("/:id/webhook", func(c *gin.Context) {
