@@ -7858,6 +7858,168 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// General Settings routes
+	settings := api.Group("/settings")
+	{
+		// Get Settings
+		settings.GET("", func(c *gin.Context) {
+			orgID := "00000000-0000-0000-0000-000000000000"
+
+			// Fetch settings from organizations table (settings JSONB column)
+			var settingsJSON sql.NullString
+			err := db.QueryRow(`
+				SELECT settings FROM organizations WHERE id = $1
+			`, orgID).Scan(&settingsJSON)
+
+			if err != nil {
+				log.Printf("Error fetching settings: %v", err)
+				// Return empty settings if not found
+				c.JSON(http.StatusOK, gin.H{
+					"data": gin.H{
+						"profile": gin.H{
+							"first_name": "",
+							"last_name":  "",
+							"email":      "",
+							"company":    "",
+						},
+						"notifications": gin.H{
+							"email": gin.H{
+								"product_sync":      true,
+								"export_completion": true,
+								"ai_optimization":   true,
+								"weekly_reports":    false,
+							},
+							"push": gin.H{
+								"connector_errors": true,
+								"webhook_failures": true,
+								"feed_generation":  false,
+							},
+						},
+						"security": gin.H{
+							"two_factor_enabled": false,
+						},
+					},
+				})
+				return
+			}
+
+			// Parse existing settings or return defaults
+			var settingsData map[string]interface{}
+			if settingsJSON.Valid && settingsJSON.String != "" {
+				if err := json.Unmarshal([]byte(settingsJSON.String), &settingsData); err != nil {
+					log.Printf("Error parsing settings JSON: %v", err)
+					settingsData = make(map[string]interface{})
+				}
+			} else {
+				settingsData = make(map[string]interface{})
+			}
+
+			// Ensure all sections exist with defaults
+			if _, ok := settingsData["profile"]; !ok {
+				settingsData["profile"] = gin.H{
+					"first_name": "",
+					"last_name":  "",
+					"email":      "",
+					"company":    "",
+				}
+			}
+			if _, ok := settingsData["notifications"]; !ok {
+				settingsData["notifications"] = gin.H{
+					"email": gin.H{
+						"product_sync":      true,
+						"export_completion": true,
+						"ai_optimization":   true,
+						"weekly_reports":    false,
+					},
+					"push": gin.H{
+						"connector_errors": true,
+						"webhook_failures": true,
+						"feed_generation":  false,
+					},
+				}
+			}
+			if _, ok := settingsData["security"]; !ok {
+				settingsData["security"] = gin.H{
+					"two_factor_enabled": false,
+				}
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"data": settingsData,
+			})
+		})
+
+		// Update Settings
+		settings.PUT("", func(c *gin.Context) {
+			var req map[string]interface{}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+				return
+			}
+
+			orgID := "00000000-0000-0000-0000-000000000000"
+
+			// Fetch existing settings
+			var existingSettingsJSON sql.NullString
+			err := db.QueryRow(`
+				SELECT settings FROM organizations WHERE id = $1
+			`, orgID).Scan(&existingSettingsJSON)
+
+			var settingsData map[string]interface{}
+			if err == nil && existingSettingsJSON.Valid && existingSettingsJSON.String != "" {
+				if err := json.Unmarshal([]byte(existingSettingsJSON.String), &settingsData); err != nil {
+					settingsData = make(map[string]interface{})
+				}
+			} else {
+				settingsData = make(map[string]interface{})
+			}
+
+			// Merge new settings with existing settings
+			for key, value := range req {
+				if key == "profile" || key == "notifications" || key == "security" {
+					// Deep merge for nested objects
+					if existingSection, ok := settingsData[key].(map[string]interface{}); ok {
+						if newSection, ok := value.(map[string]interface{}); ok {
+							for subKey, subValue := range newSection {
+								existingSection[subKey] = subValue
+							}
+							settingsData[key] = existingSection
+						} else {
+							settingsData[key] = value
+						}
+					} else {
+						settingsData[key] = value
+					}
+				}
+			}
+
+			// Convert to JSON
+			settingsBytes, err := json.Marshal(settingsData)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode settings"})
+				return
+			}
+
+			// Update in database
+			_, err = db.Exec(`
+				UPDATE organizations 
+				SET settings = $1, updated_at = NOW() 
+				WHERE id = $2
+			`, string(settingsBytes), orgID)
+
+			if err != nil {
+				log.Printf("Error updating settings: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update settings"})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"message": "Settings updated successfully",
+				"data":    settingsData,
+			})
+		})
+	}
+
 	// Serve the request
 	router.ServeHTTP(w, r)
 }
