@@ -8747,29 +8747,44 @@ func validateFacebookFeed(product map[string]interface{}) []string {
 // triggerWebhook sends webhook notification for feed events
 func triggerWebhook(db *sql.DB, feedID string, event string, payload map[string]interface{}) {
 	go func() {
+		orgID := getOrCreateOrganizationID()
+		log.Printf("🔔 Triggering webhook for feed=%s, org=%s, event=%s", feedID, orgID, event)
+
 		// Get all webhooks for this feed
 		rows, err := db.Query(`
 			SELECT id, url, secret, retry_count, timeout_seconds
 			FROM feed_webhooks 
 			WHERE feed_id = $1 AND organization_id = $2 AND enabled = TRUE AND $3 = ANY(events)
-		`, feedID, getOrCreateOrganizationID(), event)
+		`, feedID, orgID, event)
 
 		if err != nil {
-			log.Printf("Failed to fetch webhooks: %v", err)
+			log.Printf("❌ Failed to fetch webhooks: %v", err)
 			return
 		}
 		defer rows.Close()
 
+		webhookCount := 0
+
 		for rows.Next() {
+			webhookCount++
 			var webhookID, url, secret string
 			var retryCount, timeoutSeconds int
 
 			if err := rows.Scan(&webhookID, &url, &secret, &retryCount, &timeoutSeconds); err != nil {
+				log.Printf("❌ Failed to scan webhook row: %v", err)
 				continue
 			}
 
+			log.Printf("✅ Found webhook: id=%s, url=%s, event=%s", webhookID, url, event)
+
 			// Send webhook with retries
 			deliverWebhook(db, webhookID, feedID, url, event, payload, retryCount, timeoutSeconds)
+		}
+
+		if webhookCount == 0 {
+			log.Printf("⚠️ No webhooks found for feed=%s, org=%s, event=%s", feedID, orgID, event)
+		} else {
+			log.Printf("✅ Triggered %d webhook(s) for event=%s", webhookCount, event)
 		}
 	}()
 }
@@ -8777,6 +8792,8 @@ func triggerWebhook(db *sql.DB, feedID string, event string, payload map[string]
 // deliverWebhook delivers webhook with retry logic
 func deliverWebhook(db *sql.DB, webhookID, feedID, url, event string, payload map[string]interface{}, maxRetries, timeoutSeconds int) {
 	payloadJSON, _ := json.Marshal(payload)
+	log.Printf("📤 Delivering webhook to %s (event=%s, attempt=1/%d)", url, event, maxRetries+1)
+	log.Printf("📦 Payload: %s", string(payloadJSON))
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		startTime := time.Now()
@@ -8788,6 +8805,7 @@ func deliverWebhook(db *sql.DB, webhookID, feedID, url, event string, payload ma
 
 		req, err := http.NewRequest("POST", url, strings.NewReader(string(payloadJSON)))
 		if err != nil {
+			log.Printf("❌ Failed to create request: %v", err)
 			logWebhookDelivery(db, webhookID, feedID, event, payloadJSON, 0, "", 0, false, fmt.Sprintf("Failed to create request: %v", err), attempt)
 			continue
 		}
@@ -8796,10 +8814,12 @@ func deliverWebhook(db *sql.DB, webhookID, feedID, url, event string, payload ma
 		req.Header.Set("X-Webhook-Event", event)
 		req.Header.Set("X-Feed-ID", feedID)
 
+		log.Printf("🚀 Sending POST request to %s...", url)
 		resp, err := client.Do(req)
 		responseTime := time.Since(startTime).Milliseconds()
 
 		if err != nil {
+			log.Printf("❌ Request failed: %v", err)
 			logWebhookDelivery(db, webhookID, feedID, event, payloadJSON, 0, "", int(responseTime), false, fmt.Sprintf("Request failed: %v", err), attempt)
 			if attempt < maxRetries {
 				time.Sleep(time.Duration(attempt+1) * time.Second) // Exponential backoff
@@ -8810,11 +8830,14 @@ func deliverWebhook(db *sql.DB, webhookID, feedID, url, event string, payload ma
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 
+		log.Printf("📥 Response: status=%d, body=%s, time=%dms", resp.StatusCode, string(body), responseTime)
+
 		success := resp.StatusCode >= 200 && resp.StatusCode < 300
 		logWebhookDelivery(db, webhookID, feedID, event, payloadJSON, resp.StatusCode, string(body), int(responseTime), success, "", attempt)
 
 		// Update webhook stats
 		if success {
+			log.Printf("✅ Webhook delivered successfully!")
 			db.Exec(`
 				UPDATE feed_webhooks 
 				SET last_triggered_at = NOW(), 
@@ -8825,6 +8848,7 @@ func deliverWebhook(db *sql.DB, webhookID, feedID, url, event string, payload ma
 			`, webhookID)
 			return // Success, no need to retry
 		} else {
+			log.Printf("⚠️ Webhook delivery failed with status %d, retrying...", resp.StatusCode)
 			db.Exec(`
 				UPDATE feed_webhooks 
 				SET total_deliveries = total_deliveries + 1,
