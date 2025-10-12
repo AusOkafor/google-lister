@@ -8751,8 +8751,8 @@ func triggerWebhook(db *sql.DB, feedID string, event string, payload map[string]
 		rows, err := db.Query(`
 			SELECT id, url, secret, retry_count, timeout_seconds
 			FROM feed_webhooks 
-			WHERE feed_id = $1 AND enabled = TRUE AND $2 = ANY(events)
-		`, feedID, event)
+			WHERE feed_id = $1 AND organization_id = $2 AND enabled = TRUE AND $3 = ANY(events)
+		`, feedID, getOrCreateOrganizationID(), event)
 
 		if err != nil {
 			log.Printf("Failed to fetch webhooks: %v", err)
