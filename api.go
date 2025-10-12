@@ -18,7 +18,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rs/cors"
@@ -90,7 +93,56 @@ var (
 	// Temporary in-memory storage for Vercel demo
 	connectors     []Connector
 	connectorMutex sync.RWMutex
+	// Global organization ID
+	globalOrganizationID string
+	orgIDMutex           sync.RWMutex
 )
+
+// getOrCreateOrganizationID gets the organization ID from memory or creates a new one
+func getOrCreateOrganizationID() string {
+	orgIDMutex.RLock()
+	if globalOrganizationID != "" {
+		orgIDMutex.RUnlock()
+		return globalOrganizationID
+	}
+	orgIDMutex.RUnlock()
+
+	orgIDMutex.Lock()
+	defer orgIDMutex.Unlock()
+
+	// Double-check in case another goroutine created it
+	if globalOrganizationID != "" {
+		return globalOrganizationID
+	}
+
+	// Try to get existing organization from database
+	if db != nil {
+		var existingOrgID string
+		err := db.QueryRow("SELECT id FROM organizations LIMIT 1").Scan(&existingOrgID)
+		if err == nil {
+			globalOrganizationID = existingOrgID
+			return globalOrganizationID
+		}
+	}
+
+	// Create new organization ID
+	orgID := uuid.New().String()
+	globalOrganizationID = orgID
+
+	// Create organization in database if connection exists
+	if db != nil {
+		_, err := db.Exec(`
+			INSERT INTO organizations (id, name, domain, settings, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, NOW(), NOW())
+			ON CONFLICT (id) DO NOTHING
+		`, orgID, "Default Organization", "example.com", "{}")
+		if err != nil {
+			log.Printf("Warning: Could not create organization in database: %v", err)
+		}
+	}
+
+	return globalOrganizationID
+}
 
 // AI-powered SEO enhancement function using OpenRouter
 func enhanceProductSEO(product ShopifyProduct) SEOEnhancement {
@@ -4093,7 +4145,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					FROM product_feeds 
 					WHERE organization_id = $1
 				`
-				args := []interface{}{"00000000-0000-0000-0000-000000000000"}
+				args := []interface{}{getOrCreateOrganizationID()}
 
 				if status != "" {
 					query += " AND status = $" + strconv.Itoa(len(args)+1)
@@ -4144,7 +4196,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Get total count
 				countQuery := "SELECT COUNT(*) FROM product_feeds WHERE organization_id = $1"
-				countArgs := []interface{}{"00000000-0000-0000-0000-000000000000"}
+				countArgs := []interface{}{getOrCreateOrganizationID()}
 
 				if status != "" {
 					countQuery += " AND status = $2"
@@ -4192,7 +4244,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						products_count, settings, created_at, updated_at
 					) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
 					RETURNING id
-				`, "00000000-0000-0000-0000-000000000000", name, channel, format, "inactive", 0, settings).Scan(&feedID)
+				`, getOrCreateOrganizationID(), name, channel, format, "inactive", 0, settings).Scan(&feedID)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create feed"})
@@ -4223,7 +4275,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						   last_generated, created_at, updated_at, settings
 					FROM product_feeds 
 					WHERE id = $1 AND organization_id = $2
-				`, feedID, "00000000-0000-0000-0000-000000000000").Scan(
+				`, feedID, getOrCreateOrganizationID()).Scan(
 					&id, &name, &channel, &format, &status, &productsCount,
 					&lastGenerated, &createdAt, &updatedAt, &settings)
 
@@ -4290,7 +4342,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				updates = append(updates, fmt.Sprintf("updated_at = NOW()"))
-				args = append(args, feedID, "00000000-0000-0000-0000-000000000000")
+				args = append(args, feedID, getOrCreateOrganizationID())
 
 				query := fmt.Sprintf(`
 					UPDATE product_feeds 
@@ -4322,7 +4374,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				result, err := db.Exec(`
 					DELETE FROM product_feeds 
 					WHERE id = $1 AND organization_id = $2
-				`, feedID, "00000000-0000-0000-0000-000000000000")
+				`, feedID, getOrCreateOrganizationID())
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete feed"})
@@ -4343,7 +4395,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Regenerate Feed
 			feeds.POST("/:id/regenerate", func(c *gin.Context) {
 				feedID := c.Param("id")
-				organizationID := "00000000-0000-0000-0000-000000000000"
+				organizationID := getOrCreateOrganizationID()
 
 				// Get feed details including settings
 				var name, channel, format, status string
@@ -4577,7 +4629,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Download Feed
 			feeds.GET("/:id/download", func(c *gin.Context) {
 				feedID := c.Param("id")
-				organizationID := "00000000-0000-0000-0000-000000000000"
+				organizationID := getOrCreateOrganizationID()
 
 				// Get feed details including settings
 				var name, channel, feedFormat string
@@ -4951,7 +5003,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Feed Schedule Management
 			feeds.GET("/:id/schedule", func(c *gin.Context) {
 				feedID := c.Param("id")
-				organizationID := "00000000-0000-0000-0000-000000000000"
+				organizationID := getOrCreateOrganizationID()
 
 				var schedule struct {
 					ID                  string `db:"id"`
@@ -4991,7 +5043,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 			feeds.PUT("/:id/schedule", func(c *gin.Context) {
 				feedID := c.Param("id")
-				organizationID := "00000000-0000-0000-0000-000000000000"
+				organizationID := getOrCreateOrganizationID()
 
 				var req map[string]interface{}
 				if err := c.ShouldBindJSON(&req); err != nil {
@@ -5026,7 +5078,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Webhook Management
 			feeds.GET("/:id/webhook", func(c *gin.Context) {
 				feedID := c.Param("id")
-				organizationID := "00000000-0000-0000-0000-000000000000"
+				organizationID := getOrCreateOrganizationID()
 
 				var id, url, eventsArray string
 				var enabled bool
@@ -5070,7 +5122,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 			feeds.PUT("/:id/webhook", func(c *gin.Context) {
 				feedID := c.Param("id")
-				organizationID := "00000000-0000-0000-0000-000000000000"
+				organizationID := getOrCreateOrganizationID()
 
 				var req struct {
 					Enabled bool     `json:"enabled"`
@@ -5126,7 +5178,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Platform Credentials Management
 			feeds.GET("/:id/credentials", func(c *gin.Context) {
 				feedID := c.Param("id")
-				organizationID := "00000000-0000-0000-0000-000000000000"
+				organizationID := getOrCreateOrganizationID()
 
 				rows, err := db.Query(`
 					SELECT platform, merchant_id, auto_submit, submit_on_regenerate,
@@ -5170,7 +5222,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 			feeds.PUT("/:id/credentials", func(c *gin.Context) {
 				feedID := c.Param("id")
-				organizationID := "00000000-0000-0000-0000-000000000000"
+				organizationID := getOrCreateOrganizationID()
 
 				var req map[string]interface{}
 				if err := c.ShouldBindJSON(&req); err != nil {
@@ -5323,7 +5375,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					organization_id, type, title, message, priority,
 					entity_type, entity_id, entity_name, metadata
 				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-			`, "00000000-0000-0000-0000-000000000000", notifType, title, message, priority,
+			`, getOrCreateOrganizationID(), notifType, title, message, priority,
 					"feed", feedData["id"], feedData["name"], string(metadataJSON))
 
 				if err != nil {
@@ -5343,7 +5395,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			{
 				// Get all notifications
 				notifications.GET("/", func(c *gin.Context) {
-					organizationID := "00000000-0000-0000-0000-000000000000"
+					organizationID := getOrCreateOrganizationID()
 					unreadOnly := c.Query("unread_only") == "true"
 					limit := c.DefaultQuery("limit", "50")
 
@@ -5402,7 +5454,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Get unread count
 				notifications.GET("/unread-count", func(c *gin.Context) {
-					organizationID := "00000000-0000-0000-0000-000000000000"
+					organizationID := getOrCreateOrganizationID()
 
 					var count int
 					err := db.QueryRow(`
@@ -5423,7 +5475,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Mark as read
 				notifications.PUT("/:id/read", func(c *gin.Context) {
 					notifID := c.Param("id")
-					organizationID := "00000000-0000-0000-0000-000000000000"
+					organizationID := getOrCreateOrganizationID()
 
 					_, err := db.Exec(`
 					UPDATE notifications 
@@ -5441,7 +5493,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Mark all as read
 				notifications.PUT("/mark-all-read", func(c *gin.Context) {
-					organizationID := "00000000-0000-0000-0000-000000000000"
+					organizationID := getOrCreateOrganizationID()
 
 					_, err := db.Exec(`
 					UPDATE notifications 
@@ -5460,7 +5512,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Delete notification
 				notifications.DELETE("/:id", func(c *gin.Context) {
 					notifID := c.Param("id")
-					organizationID := "00000000-0000-0000-0000-000000000000"
+					organizationID := getOrCreateOrganizationID()
 
 					_, err := db.Exec(`
 					DELETE FROM notifications 
@@ -5506,7 +5558,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Feed Templates
 			feeds.GET("/templates", func(c *gin.Context) {
 				channel := c.Query("channel")
-				organizationID := "00000000-0000-0000-0000-000000000000"
+				organizationID := getOrCreateOrganizationID()
 
 				query := `
 					SELECT id, name, description, channel, format, field_mapping, 
@@ -5592,7 +5644,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					WHERE feed_id = $1 AND organization_id = $2
 					ORDER BY started_at DESC 
 					LIMIT $3 OFFSET $4
-				`, feedID, "00000000-0000-0000-0000-000000000000", limitInt, offset)
+				`, feedID, getOrCreateOrganizationID(), limitInt, offset)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch history"})
@@ -5635,7 +5687,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				db.QueryRow(`
 					SELECT COUNT(*) FROM feed_generation_history 
 					WHERE feed_id = $1 AND organization_id = $2
-				`, feedID, "00000000-0000-0000-0000-000000000000").Scan(&total)
+				`, feedID, getOrCreateOrganizationID()).Scan(&total)
 
 				c.JSON(http.StatusOK, gin.H{
 					"data": history,
@@ -5660,7 +5712,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					SELECT name, channel, status, products_count, last_generated
 					FROM product_feeds 
 					WHERE id = $1 AND organization_id = $2
-				`, feedID, "00000000-0000-0000-0000-000000000000").Scan(&feedName, &channel, &status, &productsCount, &lastGenerated)
+				`, feedID, getOrCreateOrganizationID()).Scan(&feedName, &channel, &status, &productsCount, &lastGenerated)
 
 				if err != nil {
 					c.JSON(http.StatusNotFound, gin.H{"error": "Feed not found"})
@@ -5680,7 +5732,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						AVG(file_size_bytes)
 					FROM feed_generation_history 
 					WHERE feed_id = $1 AND organization_id = $2
-				`, feedID, "00000000-0000-0000-0000-000000000000").Scan(
+				`, feedID, getOrCreateOrganizationID()).Scan(
 					&totalGenerations, &successfulGenerations, &failedGenerations, &avgGenerationTime, &avgFileSize)
 
 				// Get recent generation history (last 30 days)
@@ -5692,7 +5744,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					  AND started_at >= NOW() - INTERVAL '30 days'
 					GROUP BY DATE(started_at)
 					ORDER BY date DESC
-				`, feedID, "00000000-0000-0000-0000-000000000000")
+				`, feedID, getOrCreateOrganizationID())
 
 				var dailyStats []map[string]interface{}
 				if err == nil {
@@ -5741,7 +5793,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Feed Preview
 			feeds.GET("/:id/preview", func(c *gin.Context) {
 				feedID := c.Param("id")
-				organizationID := "00000000-0000-0000-0000-000000000000"
+				organizationID := getOrCreateOrganizationID()
 				limit := c.DefaultQuery("limit", "10")
 
 				limitInt, _ := strconv.Atoi(limit)
@@ -6904,7 +6956,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Return mock credits for now (in production, fetch from database)
 			c.JSON(http.StatusOK, gin.H{
 				"data": gin.H{
-					"organization_id":          "00000000-0000-0000-0000-000000000000",
+					"organization_id":          getOrCreateOrganizationID(),
 					"credits_remaining":        2500,
 					"credits_total":            2500,
 					"credits_used":             0,
@@ -7002,7 +7054,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Save optimization history to database
-			organizationID := "00000000-0000-0000-0000-000000000000"
+			organizationID := getOrCreateOrganizationID()
 			historyID := ""
 
 			metadataJSON, _ := json.Marshal(map[string]interface{}{
@@ -7142,7 +7194,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Save optimization history to database
-			organizationID := "00000000-0000-0000-0000-000000000000"
+			organizationID := getOrCreateOrganizationID()
 			historyID := ""
 
 			metadataJSON, _ := json.Marshal(map[string]interface{}{
@@ -7253,7 +7305,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			fmt.Printf("✅ AI Category Suggestions: %d suggestions generated\n", len(suggestions))
 
 			// Save optimization history to database
-			organizationID := "00000000-0000-0000-0000-000000000000"
+			organizationID := getOrCreateOrganizationID()
 			historyID := ""
 
 			// Store first suggestion as the optimized value
@@ -7311,7 +7363,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Get settings from database to check require_approval
-			organizationID := "00000000-0000-0000-0000-000000000000"
+			organizationID := getOrCreateOrganizationID()
 			var requireApproval bool
 			err := db.QueryRow(`
 				SELECT require_approval FROM ai_settings WHERE organization_id = $1
@@ -7643,7 +7695,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				WHERE organization_id = $1
 				LIMIT 1
 			`
-			orgID := "00000000-0000-0000-0000-000000000000"
+			orgID := getOrCreateOrganizationID()
 
 			err := db.QueryRow(query, orgID).Scan(
 				&settings.ID,
@@ -7707,7 +7759,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			orgID := "00000000-0000-0000-0000-000000000000"
+			orgID := getOrCreateOrganizationID()
 
 			// Build update query dynamically based on provided fields
 			updateQuery := `
@@ -7863,7 +7915,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	{
 		// Get Settings
 		settings.GET("", func(c *gin.Context) {
-			orgID := "00000000-0000-0000-0000-000000000000"
+			orgID := getOrCreateOrganizationID()
 
 			// Fetch settings from organizations table (settings JSONB column)
 			var settingsJSON sql.NullString
@@ -7957,7 +8009,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			orgID := "00000000-0000-0000-0000-000000000000"
+			orgID := getOrCreateOrganizationID()
 
 			// Fetch existing settings
 			var existingSettingsJSON sql.NullString
