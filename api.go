@@ -170,7 +170,10 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 		return
 	}
 
-	log.Printf("✅ Access token is valid, proceeding with product sync")
+	// Read the shop info response to verify it's working
+	shopInfoBody, _ := io.ReadAll(testResp.Body)
+	log.Printf("✅ Access token is valid, shop info: %s", string(shopInfoBody))
+	log.Printf("✅ Proceeding with product sync")
 
 	// Now fetch products
 	url := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", cleanDomain)
@@ -250,6 +253,15 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 	}
 
 	log.Printf("✅ Shopify sync completed for %s - %d/%d products imported", shopDomain, successCount, len(result.Products))
+
+	// Verify products were actually inserted
+	var productCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM products WHERE organization_id = $1", globalOrganizationID).Scan(&productCount)
+	if err != nil {
+		log.Printf("❌ Failed to count products: %v", err)
+	} else {
+		log.Printf("📊 Total products in database for organization: %d", productCount)
+	}
 }
 
 // Helper functions for sync
