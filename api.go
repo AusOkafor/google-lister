@@ -8792,8 +8792,11 @@ func triggerWebhook(db *sql.DB, feedID string, event string, payload map[string]
 
 // createNotificationFromWebhook creates notification directly from webhook payload
 func createNotificationFromWebhook(db *sql.DB, payload map[string]interface{}) {
-	event := payload["event"]
+	event, _ := payload["event"].(string)
 	feedName, _ := payload["feed_name"].(string)
+	feedID, _ := payload["feed_id"].(string)
+
+	log.Printf("🔔 Creating notification: event=%s, feedName=%s, feedID=%s", event, feedName, feedID)
 
 	var notifType, title, message string
 	var priority string = "normal"
@@ -8801,20 +8804,32 @@ func createNotificationFromWebhook(db *sql.DB, payload map[string]interface{}) {
 	switch event {
 	case "feed.generated":
 		notifType = "feed_generated"
-		title = fmt.Sprintf("Feed Generated: %v", feedName)
+		title = fmt.Sprintf("Feed Generated: %s", feedName)
+
+		// Handle both int and float64 for products_included
 		productsIncluded := 0
-		if pi, ok := payload["products_included"].(float64); ok {
-			productsIncluded = int(pi)
+		switch v := payload["products_included"].(type) {
+		case int:
+			productsIncluded = v
+		case float64:
+			productsIncluded = int(v)
 		}
+
+		// Handle both int and float64 for generation_time_ms
 		generationTime := 0.0
-		if gt, ok := payload["generation_time_ms"].(float64); ok {
-			generationTime = gt / 1000.0
+		switch v := payload["generation_time_ms"].(type) {
+		case int:
+			generationTime = float64(v) / 1000.0
+		case float64:
+			generationTime = v / 1000.0
 		}
+
 		message = fmt.Sprintf("Successfully generated %d products in %.2fs", productsIncluded, generationTime)
+		log.Printf("📊 Generated notification: %d products, %.2fs", productsIncluded, generationTime)
 
 	case "feed.failed":
 		notifType = "feed_failed"
-		title = fmt.Sprintf("Feed Generation Failed: %v", feedName)
+		title = fmt.Sprintf("Feed Generation Failed: %s", feedName)
 		errorMsg := "Unknown error"
 		if em, ok := payload["error"].(string); ok {
 			errorMsg = em
@@ -8824,6 +8839,7 @@ func createNotificationFromWebhook(db *sql.DB, payload map[string]interface{}) {
 	}
 
 	metadataJSON, _ := json.Marshal(payload)
+	log.Printf("💾 Inserting notification: type=%s, title=%s, message=%s", notifType, title, message)
 
 	_, err := db.Exec(`
 		INSERT INTO notifications (
@@ -8831,12 +8847,12 @@ func createNotificationFromWebhook(db *sql.DB, payload map[string]interface{}) {
 			entity_type, entity_id, entity_name, metadata
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`, getOrCreateOrganizationID(), notifType, title, message, priority,
-		"feed", payload["feed_id"], feedName, string(metadataJSON))
+		"feed", feedID, feedName, string(metadataJSON))
 
 	if err != nil {
 		log.Printf("❌ Failed to create notification: %v", err)
 	} else {
-		log.Printf("✅ Notification created successfully!")
+		log.Printf("✅ Notification created successfully: %s - %s", title, message)
 	}
 }
 
