@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -18,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-
 	"time"
 
 	"github.com/google/uuid"
@@ -97,6 +97,341 @@ var (
 	globalOrganizationID string
 	orgIDMutex           sync.RWMutex
 )
+
+// syncShopifyProducts syncs products from Shopify store
+func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string) {
+	log.Printf("🔄 Starting Shopify product sync for %s", shopDomain)
+
+	// Fetch products from Shopify
+	url := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", shopDomain)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Printf("❌ Failed to create Shopify request: %v", err)
+		return
+	}
+
+	req.Header.Set("X-Shopify-Access-Token", accessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("❌ Failed to fetch Shopify products: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		log.Printf("❌ Shopify API returned status %d", resp.StatusCode)
+		return
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var result struct {
+		Products []ShopifyProduct `json:"products"`
+	}
+
+	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("❌ Failed to parse Shopify response: %v", err)
+		return
+	}
+
+	log.Printf("✅ Fetched %d products from Shopify", len(result.Products))
+
+	// Insert/update products in database
+	for _, product := range result.Products {
+		imagesJSON, _ := json.Marshal(product.Images)
+		metadataJSON, _ := json.Marshal(product)
+
+		_, err := db.Exec(`
+			INSERT INTO products (
+				external_id, title, description, price, currency, sku,
+				brand, category, images, status, metadata, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+			ON CONFLICT (external_id) 
+			DO UPDATE SET
+				title = $2, description = $3, price = $4, currency = $5,
+				sku = $6, brand = $7, category = $8, images = $9,
+				status = $10, metadata = $11, updated_at = NOW()
+		`, product.ID, product.Title, product.BodyHTML,
+			getFirstVariantPrice(product), "USD", getFirstVariantSKU(product),
+			product.Vendor, product.ProductType, string(imagesJSON),
+			product.Status, string(metadataJSON))
+
+		if err != nil {
+			log.Printf("❌ Failed to insert product %d: %v", product.ID, err)
+		}
+	}
+
+	log.Printf("✅ Shopify sync completed for %s", shopDomain)
+}
+
+// Helper functions for sync
+func getFirstVariantPrice(product ShopifyProduct) float64 {
+	if len(product.Variants) > 0 {
+		priceStr := product.Variants[0].Price
+		price, _ := strconv.ParseFloat(priceStr, 64)
+		return price
+	}
+	return 0.0
+}
+
+func getFirstVariantSKU(product ShopifyProduct) string {
+	if len(product.Variants) > 0 {
+		return product.Variants[0].SKU
+	}
+	return ""
+}
+
+// CSV Import helper functions
+func parseAndImportCSV(db *sql.DB, file io.Reader, organizationID string) (int, []string) {
+	reader := csv.NewReader(file)
+	records, err := reader.ReadAll()
+	if err != nil {
+		return 0, []string{fmt.Sprintf("Failed to parse CSV: %v", err)}
+	}
+
+	if len(records) < 2 {
+		return 0, []string{"CSV file is empty or has no data rows"}
+	}
+
+	headers := records[0]
+	imported := 0
+	var errors []string
+
+	// Validate headers
+	requiredHeaders := []string{"title", "price"}
+	headerMap := make(map[string]int)
+	for i, header := range headers {
+		headerMap[strings.ToLower(strings.TrimSpace(header))] = i
+	}
+
+	for _, required := range requiredHeaders {
+		if _, exists := headerMap[required]; !exists {
+			errors = append(errors, fmt.Sprintf("Missing required header: %s", required))
+		}
+	}
+
+	if len(errors) > 0 {
+		return 0, errors
+	}
+
+	// Import products
+	for rowNum, record := range records[1:] {
+		if len(record) < len(headers) {
+			errors = append(errors, fmt.Sprintf("Row %d: Insufficient columns", rowNum+2))
+			continue
+		}
+
+		// Extract data
+		externalID := getCSVValue(record, headerMap, "id")
+		if externalID == "" {
+			externalID = fmt.Sprintf("csv-%d-%d", time.Now().Unix(), rowNum)
+		}
+		title := getCSVValue(record, headerMap, "title")
+		description := getCSVValue(record, headerMap, "description")
+		priceStr := getCSVValue(record, headerMap, "price")
+		currency := getCSVValue(record, headerMap, "currency")
+		if currency == "" {
+			currency = "USD"
+		}
+		sku := getCSVValue(record, headerMap, "sku")
+		brand := getCSVValue(record, headerMap, "brand")
+		category := getCSVValue(record, headerMap, "category")
+		status := getCSVValue(record, headerMap, "status")
+		if status == "" {
+			status = "active"
+		}
+		imageURL := getCSVValue(record, headerMap, "image_url")
+
+		// Parse price
+		price, err := strconv.ParseFloat(priceStr, 64)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Row %d: Invalid price '%s'", rowNum+2, priceStr))
+			continue
+		}
+
+		// Create images JSON
+		imagesJSON := "[]"
+		if imageURL != "" {
+			images := []map[string]string{{"src": imageURL}}
+			imagesBytes, _ := json.Marshal(images)
+			imagesJSON = string(imagesBytes)
+		}
+
+		// Insert product
+		_, err = db.Exec(`
+			INSERT INTO products (
+				external_id, title, description, price, currency, sku,
+				brand, category, images, status, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+			ON CONFLICT (external_id) 
+			DO UPDATE SET
+				title = $2, description = $3, price = $4, currency = $5,
+				sku = $6, brand = $7, category = $8, images = $9,
+				status = $10, updated_at = NOW()
+		`, externalID, title, description, price, currency, sku, brand, category, imagesJSON, status)
+
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Row %d: Failed to import - %v", rowNum+2, err))
+		} else {
+			imported++
+		}
+	}
+
+	return imported, errors
+}
+
+func getCSVValue(record []string, headerMap map[string]int, key string) string {
+	if idx, exists := headerMap[key]; exists && idx < len(record) {
+		return strings.TrimSpace(record[idx])
+	}
+	return ""
+}
+
+func validateCSV(file io.Reader) []string {
+	reader := csv.NewReader(file)
+	records, err := reader.ReadAll()
+	if err != nil {
+		return []string{fmt.Sprintf("Failed to parse CSV: %v", err)}
+	}
+
+	var errors []string
+
+	if len(records) < 1 {
+		return []string{"CSV file is empty"}
+	}
+
+	// Validate headers
+	headers := records[0]
+	requiredHeaders := []string{"title", "price"}
+	headerMap := make(map[string]bool)
+	for _, header := range headers {
+		headerMap[strings.ToLower(strings.TrimSpace(header))] = true
+	}
+
+	for _, required := range requiredHeaders {
+		if !headerMap[required] {
+			errors = append(errors, fmt.Sprintf("Missing required header: %s", required))
+		}
+	}
+
+	if len(records) < 2 {
+		errors = append(errors, "CSV has no data rows")
+	}
+
+	return errors
+}
+
+// WooCommerce helper functions
+func validateWooCommerceCredentials(storeURL, consumerKey, consumerSecret string) (bool, error) {
+	// Clean URL
+	storeURL = strings.TrimSuffix(storeURL, "/")
+
+	// Test API call
+	url := fmt.Sprintf("%s/wp-json/wc/v3/products?per_page=1", storeURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return false, err
+	}
+
+	req.SetBasicAuth(consumerKey, consumerSecret)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == 200, nil
+}
+
+func syncWooCommerceProducts(db *sql.DB, connectorID, storeURL, consumerKey, consumerSecret, organizationID string) {
+	log.Printf("🔄 Starting WooCommerce product sync for %s", storeURL)
+
+	storeURL = strings.TrimSuffix(storeURL, "/")
+	url := fmt.Sprintf("%s/wp-json/wc/v3/products?per_page=100", storeURL)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Printf("❌ Failed to create WooCommerce request: %v", err)
+		return
+	}
+
+	req.SetBasicAuth(consumerKey, consumerSecret)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("❌ Failed to fetch WooCommerce products: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		log.Printf("❌ WooCommerce API returned status %d", resp.StatusCode)
+		return
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var products []map[string]interface{}
+	if err := json.Unmarshal(body, &products); err != nil {
+		log.Printf("❌ Failed to parse WooCommerce response: %v", err)
+		return
+	}
+
+	log.Printf("✅ Fetched %d products from WooCommerce", len(products))
+
+	// Import products
+	for _, product := range products {
+		title, _ := product["name"].(string)
+		description, _ := product["description"].(string)
+		priceStr, _ := product["price"].(string)
+		sku, _ := product["sku"].(string)
+		status, _ := product["status"].(string)
+
+		price, _ := strconv.ParseFloat(priceStr, 64)
+		externalID := fmt.Sprintf("%v", product["id"])
+
+		// Get images
+		imagesJSON := "[]"
+		if images, ok := product["images"].([]interface{}); ok && len(images) > 0 {
+			imagesBytes, _ := json.Marshal(images)
+			imagesJSON = string(imagesBytes)
+		}
+
+		// Get categories
+		category := ""
+		if categories, ok := product["categories"].([]interface{}); ok && len(categories) > 0 {
+			if cat, ok := categories[0].(map[string]interface{}); ok {
+				category, _ = cat["name"].(string)
+			}
+		}
+
+		_, err = db.Exec(`
+			INSERT INTO products (
+				external_id, title, description, price, currency, sku,
+				category, images, status, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+			ON CONFLICT (external_id) 
+			DO UPDATE SET
+				title = $2, description = $3, price = $4, currency = $5,
+				sku = $6, category = $7, images = $8,
+				status = $9, updated_at = NOW()
+		`, externalID, title, description, price, "USD", sku, category, imagesJSON, status)
+
+		if err != nil {
+			log.Printf("❌ Failed to insert WooCommerce product %s: %v", externalID, err)
+		}
+	}
+
+	log.Printf("✅ WooCommerce sync completed for %s", storeURL)
+}
 
 // getOrCreateOrganizationID gets the organization ID from memory or creates a new one
 func getOrCreateOrganizationID() string {
@@ -6602,9 +6937,18 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 	// Connectors
 	api.GET("/connectors", func(c *gin.Context) {
-		// Query connectors from Supabase database
-		rows, err := db.Query("SELECT id, name, type, status, shop_domain, created_at, last_sync FROM connectors ORDER BY created_at DESC")
+		organizationID := getOrCreateOrganizationID()
+
+		// Query connectors from database filtered by organization
+		rows, err := db.Query(`
+			SELECT id, name, type, status, shop_domain, created_at, last_sync 
+			FROM connectors 
+			WHERE organization_id = $1 
+			ORDER BY created_at DESC
+		`, organizationID)
+
 		if err != nil {
+			log.Printf("Failed to query connectors: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query connectors"})
 			return
 		}
@@ -6612,14 +6956,26 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 		var connectors []map[string]interface{}
 		for rows.Next() {
-			var id, name, connectorType, status, shopDomain string
+			var id, name, connectorType, status string
+			var shopDomain sql.NullString
 			var createdAt time.Time
-			var lastSync *time.Time
+			var lastSync sql.NullTime
 
 			err := rows.Scan(&id, &name, &connectorType, &status, &shopDomain, &createdAt, &lastSync)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan connector"})
-				return
+				log.Printf("Failed to scan connector: %v", err)
+				continue
+			}
+
+			shopDomainStr := ""
+			if shopDomain.Valid {
+				shopDomainStr = shopDomain.String
+			}
+
+			var lastSyncStr *string
+			if lastSync.Valid {
+				formatted := lastSync.Time.Format(time.RFC3339)
+				lastSyncStr = &formatted
 			}
 
 			connectors = append(connectors, map[string]interface{}{
@@ -6627,9 +6983,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				"name":        name,
 				"type":        connectorType,
 				"status":      status,
-				"shop_domain": shopDomain,
-				"created_at":  createdAt,
-				"last_sync":   lastSync,
+				"shop_domain": shopDomainStr,
+				"created_at":  createdAt.Format(time.RFC3339),
+				"last_sync":   lastSyncStr,
 			})
 		}
 
@@ -6638,6 +6994,363 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			"message": "Connectors retrieved successfully",
 		})
 	})
+
+	// Get single connector
+	api.GET("/connectors/:id", func(c *gin.Context) {
+		connectorID := c.Param("id")
+		organizationID := getOrCreateOrganizationID()
+
+		var id, name, connectorType, status, accessToken string
+		var shopDomain sql.NullString
+		var createdAt time.Time
+		var lastSync sql.NullTime
+
+		err := db.QueryRow(`
+			SELECT id, name, type, status, shop_domain, access_token, created_at, last_sync 
+			FROM connectors 
+			WHERE id = $1 AND organization_id = $2
+		`, connectorID, organizationID).Scan(&id, &name, &connectorType, &status, &shopDomain, &accessToken, &createdAt, &lastSync)
+
+		if err != nil {
+			log.Printf("Connector not found: %v", err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Connector not found"})
+			return
+		}
+
+		shopDomainStr := ""
+		if shopDomain.Valid {
+			shopDomainStr = shopDomain.String
+		}
+
+		var lastSyncStr *string
+		if lastSync.Valid {
+			formatted := lastSync.Time.Format(time.RFC3339)
+			lastSyncStr = &formatted
+		}
+
+		c.JSON(200, gin.H{
+			"data": map[string]interface{}{
+				"id":          id,
+				"name":        name,
+				"type":        connectorType,
+				"status":      status,
+				"shop_domain": shopDomainStr,
+				"created_at":  createdAt.Format(time.RFC3339),
+				"last_sync":   lastSyncStr,
+			},
+		})
+	})
+
+	// Create connector
+	api.POST("/connectors", func(c *gin.Context) {
+		organizationID := getOrCreateOrganizationID()
+
+		var req struct {
+			Name       string `json:"name" binding:"required"`
+			Type       string `json:"type" binding:"required"`
+			ShopDomain string `json:"shop_domain"`
+			APIKey     string `json:"api_key"`
+			APISecret  string `json:"api_secret"`
+		}
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		// Validate connector type
+		validTypes := []string{"shopify", "woocommerce", "csv", "api"}
+		isValid := false
+		for _, t := range validTypes {
+			if req.Type == t {
+				isValid = true
+				break
+			}
+		}
+		if !isValid {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid connector type"})
+			return
+		}
+
+		var connectorID string
+		err := db.QueryRow(`
+			INSERT INTO connectors (organization_id, name, type, status, shop_domain, created_at)
+			VALUES ($1, $2, $3, $4, $5, NOW())
+			RETURNING id
+		`, organizationID, req.Name, req.Type, "PENDING", req.ShopDomain).Scan(&connectorID)
+
+		if err != nil {
+			log.Printf("Failed to create connector: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create connector"})
+			return
+		}
+
+		c.JSON(http.StatusCreated, gin.H{
+			"data": map[string]interface{}{
+				"id":     connectorID,
+				"status": "PENDING",
+			},
+			"message": "Connector created successfully",
+		})
+	})
+
+	// Update connector
+	api.PUT("/connectors/:id", func(c *gin.Context) {
+		connectorID := c.Param("id")
+		organizationID := getOrCreateOrganizationID()
+
+		var req struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		}
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		_, err := db.Exec(`
+			UPDATE connectors 
+			SET name = COALESCE(NULLIF($1, ''), name),
+			    status = COALESCE(NULLIF($2, ''), status),
+			    updated_at = NOW()
+			WHERE id = $3 AND organization_id = $4
+		`, req.Name, req.Status, connectorID, organizationID)
+
+		if err != nil {
+			log.Printf("Failed to update connector: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update connector"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Connector updated successfully"})
+	})
+
+	// Delete connector
+	api.DELETE("/connectors/:id", func(c *gin.Context) {
+		connectorID := c.Param("id")
+		organizationID := getOrCreateOrganizationID()
+
+		result, err := db.Exec(`
+			DELETE FROM connectors 
+			WHERE id = $1 AND organization_id = $2
+		`, connectorID, organizationID)
+
+		if err != nil {
+			log.Printf("Failed to delete connector: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete connector"})
+			return
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Connector not found"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Connector deleted successfully"})
+	})
+
+	// Sync connector
+	api.POST("/connectors/:id/sync", func(c *gin.Context) {
+		connectorID := c.Param("id")
+		organizationID := getOrCreateOrganizationID()
+
+		// Get connector details
+		var connectorType, shopDomain, accessToken string
+		err := db.QueryRow(`
+			SELECT type, shop_domain, access_token 
+			FROM connectors 
+			WHERE id = $1 AND organization_id = $2 AND status = 'ACTIVE'
+		`, connectorID, organizationID).Scan(&connectorType, &shopDomain, &accessToken)
+
+		if err != nil {
+			log.Printf("Connector not found or not active: %v", err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Connector not found or not active"})
+			return
+		}
+
+		// Update last_sync timestamp
+		db.Exec(`
+			UPDATE connectors 
+			SET last_sync = NOW() 
+			WHERE id = $1
+		`, connectorID)
+
+		// Trigger sync based on connector type
+		switch connectorType {
+		case "shopify":
+			// Trigger Shopify sync
+			go syncShopifyProducts(db, connectorID, shopDomain, accessToken)
+			c.JSON(http.StatusOK, gin.H{"message": "Shopify sync started"})
+		case "woocommerce":
+			c.JSON(http.StatusOK, gin.H{"message": "WooCommerce sync will be implemented"})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Sync not supported for this connector type"})
+		}
+	})
+
+	// CSV Import routes
+	csv := api.Group("/csv")
+	{
+		// Upload CSV file
+		csv.POST("/upload", func(c *gin.Context) {
+			organizationID := getOrCreateOrganizationID()
+
+			file, err := c.FormFile("file")
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
+				return
+			}
+
+			// Validate file extension
+			if !strings.HasSuffix(strings.ToLower(file.Filename), ".csv") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Only CSV files are allowed"})
+				return
+			}
+
+			// Open uploaded file
+			fileHandle, err := file.Open()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open file"})
+				return
+			}
+			defer fileHandle.Close()
+
+			// Parse CSV and import products
+			importedCount, errors := parseAndImportCSV(db, fileHandle, organizationID)
+
+			c.JSON(http.StatusOK, gin.H{
+				"message":  fmt.Sprintf("CSV import completed: %d products imported", importedCount),
+				"imported": importedCount,
+				"errors":   errors,
+			})
+		})
+
+		// Download CSV template
+		csv.GET("/template", func(c *gin.Context) {
+			template := `id,title,description,price,currency,sku,brand,category,status,image_url
+1,Sample Product,This is a sample product description,29.99,USD,SKU-001,Sample Brand,Electronics,active,https://example.com/image.jpg
+2,Another Product,Another product description,49.99,USD,SKU-002,Another Brand,Clothing,active,https://example.com/image2.jpg`
+
+			c.Header("Content-Disposition", "attachment; filename=product_import_template.csv")
+			c.Header("Content-Type", "text/csv")
+			c.String(http.StatusOK, template)
+		})
+
+		// Validate CSV file without importing
+		csv.POST("/validate", func(c *gin.Context) {
+			file, err := c.FormFile("file")
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
+				return
+			}
+
+			if !strings.HasSuffix(strings.ToLower(file.Filename), ".csv") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Only CSV files are allowed"})
+				return
+			}
+
+			fileHandle, err := file.Open()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open file"})
+				return
+			}
+			defer fileHandle.Close()
+
+			validationErrors := validateCSV(fileHandle)
+
+			if len(validationErrors) > 0 {
+				c.JSON(http.StatusOK, gin.H{
+					"valid":  false,
+					"errors": validationErrors,
+				})
+			} else {
+				c.JSON(http.StatusOK, gin.H{
+					"valid":   true,
+					"message": "CSV file is valid",
+				})
+			}
+		})
+	}
+
+	// WooCommerce routes
+	woocommerce := api.Group("/woocommerce")
+	{
+		// Connect WooCommerce store
+		woocommerce.POST("/connect", func(c *gin.Context) {
+			organizationID := getOrCreateOrganizationID()
+
+			var req struct {
+				StoreName      string `json:"store_name" binding:"required"`
+				StoreURL       string `json:"store_url" binding:"required"`
+				ConsumerKey    string `json:"consumer_key" binding:"required"`
+				ConsumerSecret string `json:"consumer_secret" binding:"required"`
+			}
+
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			// Validate WooCommerce credentials
+			isValid, err := validateWooCommerceCredentials(req.StoreURL, req.ConsumerKey, req.ConsumerSecret)
+			if err != nil || !isValid {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid WooCommerce credentials"})
+				return
+			}
+
+			// Create connector in database
+			var connectorID string
+			err = db.QueryRow(`
+				INSERT INTO connectors (organization_id, name, type, status, shop_domain, api_key, api_secret, created_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+				RETURNING id
+			`, organizationID, req.StoreName, "woocommerce", "ACTIVE", req.StoreURL, req.ConsumerKey, req.ConsumerSecret).Scan(&connectorID)
+
+			if err != nil {
+				log.Printf("Failed to create WooCommerce connector: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create connector"})
+				return
+			}
+
+			c.JSON(http.StatusCreated, gin.H{
+				"data": map[string]interface{}{
+					"id":     connectorID,
+					"status": "ACTIVE",
+				},
+				"message": "WooCommerce store connected successfully",
+			})
+		})
+
+		// Sync WooCommerce products
+		woocommerce.POST("/:id/sync", func(c *gin.Context) {
+			connectorID := c.Param("id")
+			organizationID := getOrCreateOrganizationID()
+
+			// Get connector details
+			var storeURL, consumerKey, consumerSecret string
+			err := db.QueryRow(`
+				SELECT shop_domain, api_key, api_secret 
+				FROM connectors 
+				WHERE id = $1 AND organization_id = $2 AND type = 'woocommerce' AND status = 'ACTIVE'
+			`, connectorID, organizationID).Scan(&storeURL, &consumerKey, &consumerSecret)
+
+			if err != nil {
+				log.Printf("WooCommerce connector not found: %v", err)
+				c.JSON(http.StatusNotFound, gin.H{"error": "Connector not found"})
+				return
+			}
+
+			// Update last_sync timestamp
+			db.Exec(`UPDATE connectors SET last_sync = NOW() WHERE id = $1`, connectorID)
+
+			// Trigger sync
+			go syncWooCommerceProducts(db, connectorID, storeURL, consumerKey, consumerSecret, organizationID)
+
+			c.JSON(http.StatusOK, gin.H{"message": "WooCommerce sync started"})
+		})
+	}
 
 	// Shopify routes
 	shopify := api.Group("/shopify")
