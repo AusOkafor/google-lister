@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -177,69 +178,112 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 	log.Printf("✅ Access token is valid, shop info: %s", string(shopInfoBody))
 	log.Printf("✅ Proceeding with product sync")
 
-	// Now fetch products
-	url := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", cleanDomain)
-	log.Printf("🌐 Making request to: %s", url)
+	// Fetch all products with pagination support
+	var allProducts []ShopifyProduct
+	pageInfo := ""
+	pageCount := 0
 
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		log.Printf("❌ Failed to create Shopify request: %v", err)
-		return
-	}
+	for {
+		pageCount++
+		log.Printf("🔄 Fetching page %d of products...", pageCount)
 
-	req.Header.Set("X-Shopify-Access-Token", accessToken)
-	req.Header.Set("Content-Type", "application/json")
-	// Try the products API request with retry logic
-	var resp *http.Response
-	for attempt := 1; attempt <= 3; attempt++ {
-		log.Printf("🔄 Attempt %d/3: Fetching products from Shopify API", attempt)
-		resp, err = client.Do(req)
-		if err == nil {
+		// Build URL with pagination
+		url := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", cleanDomain)
+		if pageInfo != "" {
+			url += "&page_info=" + pageInfo
+		}
+
+		log.Printf("🌐 Making request to: %s", url)
+
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			log.Printf("❌ Failed to create Shopify request: %v", err)
+			return
+		}
+
+		req.Header.Set("X-Shopify-Access-Token", accessToken)
+		req.Header.Set("Content-Type", "application/json")
+
+		// Try the products API request with retry logic
+		var resp *http.Response
+		for attempt := 1; attempt <= 3; attempt++ {
+			log.Printf("🔄 Attempt %d/3: Fetching page %d from Shopify API", attempt, pageCount)
+			resp, err = client.Do(req)
+			if err == nil {
+				break
+			}
+			log.Printf("❌ Attempt %d failed: %v", attempt, err)
+			if attempt < 3 {
+				log.Printf("⏳ Waiting 10 seconds before retry...")
+				time.Sleep(10 * time.Second)
+			}
+		}
+
+		if err != nil {
+			log.Printf("❌ All 3 attempts failed to fetch products: %v", err)
+			return
+		}
+
+		log.Printf("📡 Shopify API response status: %d", resp.StatusCode)
+
+		if resp.StatusCode != 200 {
+			body, _ := io.ReadAll(resp.Body)
+			log.Printf("❌ Shopify API error response: %s", string(body))
+			resp.Body.Close()
+			return
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		var result struct {
+			Products []ShopifyProduct `json:"products"`
+		}
+
+		if err := json.Unmarshal(body, &result); err != nil {
+			log.Printf("❌ Failed to parse Shopify response: %v", err)
+			return
+		}
+
+		log.Printf("✅ Fetched %d products from page %d", len(result.Products), pageCount)
+		allProducts = append(allProducts, result.Products...)
+
+		// Check for next page using Link header
+		linkHeader := resp.Header.Get("Link")
+		if linkHeader == "" || !strings.Contains(linkHeader, "rel=\"next\"") {
+			log.Printf("📄 No more pages, total products fetched: %d", len(allProducts))
 			break
 		}
-		log.Printf("❌ Attempt %d failed: %v", attempt, err)
-		if attempt < 3 {
-			log.Printf("⏳ Waiting 10 seconds before retry...")
-			time.Sleep(10 * time.Second)
+
+		// Extract page_info from Link header for next request
+		// Link format: <https://shop.myshopify.com/admin/api/2023-10/products.json?page_info=...>; rel="next"
+		nextMatch := regexp.MustCompile(`page_info=([^&>]+)`).FindStringSubmatch(linkHeader)
+		if len(nextMatch) > 1 {
+			pageInfo = nextMatch[1]
+			log.Printf("🔗 Next page info: %s", pageInfo)
+		} else {
+			log.Printf("⚠️ Could not extract page_info from Link header")
+			break
+		}
+
+		// Safety check to prevent infinite loops
+		if pageCount > 10 {
+			log.Printf("⚠️ Reached maximum page limit (10), stopping pagination")
+			break
 		}
 	}
 
-	if err != nil {
-		log.Printf("❌ All 3 attempts failed to fetch products: %v", err)
-		return
-	}
-	defer resp.Body.Close()
+	log.Printf("✅ Total products fetched from all pages: %d", len(allProducts))
 
-	log.Printf("📡 Shopify API response status: %d", resp.StatusCode)
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("❌ Shopify API error response: %s", string(body))
-		return
-	}
-
-	body, _ := io.ReadAll(resp.Body)
-
-	var result struct {
-		Products []ShopifyProduct `json:"products"`
-	}
-
-	if err := json.Unmarshal(body, &result); err != nil {
-		log.Printf("❌ Failed to parse Shopify response: %v", err)
-		return
-	}
-
-	log.Printf("✅ Fetched %d products from Shopify", len(result.Products))
-
-	if len(result.Products) == 0 {
+	if len(allProducts) == 0 {
 		log.Printf("⚠️ No products found in Shopify store")
 		return
 	}
 
 	// Insert/update products in database
 	successCount := 0
-	for i, product := range result.Products {
-		log.Printf("📦 Processing product %d/%d: %s (ID: %d)", i+1, len(result.Products), product.Title, product.ID)
+	for i, product := range allProducts {
+		log.Printf("📦 Processing product %d/%d: %s (ID: %d)", i+1, len(allProducts), product.Title, product.ID)
 		imagesJSON, _ := json.Marshal(product.Images)
 		metadataJSON, _ := json.Marshal(product)
 
@@ -268,7 +312,7 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 		}
 	}
 
-	log.Printf("✅ Shopify sync completed for %s - %d/%d products imported", shopDomain, successCount, len(result.Products))
+	log.Printf("✅ Shopify sync completed for %s - %d/%d products imported", shopDomain, successCount, len(allProducts))
 
 	// Verify products were actually inserted
 	var productCount int
