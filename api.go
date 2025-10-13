@@ -7762,73 +7762,49 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Convert Go slice to PostgreSQL array format for images
 				imageURLsArray := "{" + strings.Join(transformedProduct.Images, ",") + "}"
 
-				// Try upsert first, fallback to check-and-insert if constraint doesn't exist
+				// Check if product exists first, then insert or update
 				fmt.Printf("🔍 About to insert/update product with metadata length: %d\n", len(string(enhancedMetadataJSON)))
-				_, err := db.Exec(`
-						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, updated_at)
-						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
-						ON CONFLICT (connector_id, external_id) 
-						DO UPDATE SET 
-							title = EXCLUDED.title,
-							description = EXCLUDED.description,
-							price = EXCLUDED.price,
-							currency = EXCLUDED.currency,
-							sku = EXCLUDED.sku,
-							brand = EXCLUDED.brand,
-							category = EXCLUDED.category,
-							images = EXCLUDED.images,
-							variants = EXCLUDED.variants,
-							metadata = EXCLUDED.metadata,
-							status = EXCLUDED.status,
-							updated_at = NOW()
-					`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
-					transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
-					transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
-					transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
 
-				if err != nil {
-					fmt.Printf("🔍 Database error: %v\n", err)
-				} else {
-					fmt.Printf("🔍 Product successfully updated with SEO metadata\n")
-				}
+				// Check if product exists
+				var existingID string
+				err := db.QueryRow("SELECT id FROM products WHERE connector_id = $1 AND external_id = $2", connectorID, transformedProduct.ExternalID).Scan(&existingID)
 
-				// If upsert fails due to missing constraint, fallback to check-and-insert
-				if err != nil && strings.Contains(err.Error(), "no unique or exclusion constraint") {
-					// Check if product already exists
-					var existingID string
-					checkErr := db.QueryRow(`
-							SELECT id FROM products 
-							WHERE connector_id = $1 AND external_id = $2
-						`, connectorID, transformedProduct.ExternalID).Scan(&existingID)
+				if err == nil {
+					// Product exists, update it
+					_, err = db.Exec(`
+						UPDATE products SET 
+							title = $1, description = $2, price = $3, currency = $4,
+							sku = $5, brand = $6, category = $7, images = $8,
+							variants = $9, metadata = $10, status = $11, updated_at = NOW()
+						WHERE connector_id = $12 AND external_id = $13
+					`, transformedProduct.Title, transformedProduct.Description,
+						transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
+						transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
+						transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE",
+						connectorID, transformedProduct.ExternalID)
 
-					if checkErr == nil {
-						// Product exists, update it
-						fmt.Printf("🔍 Updating existing product %s with metadata length: %d\n", existingID, len(string(enhancedMetadataJSON)))
-						_, err = db.Exec(`
-								UPDATE products SET 
-									title = $1, description = $2, price = $3, currency = $4, 
-									sku = $5, brand = $6, category = $7, images = $8, 
-									variants = $9, metadata = $10, status = $11, updated_at = NOW()
-								WHERE id = $12
-							`, transformedProduct.Title, transformedProduct.Description, transformedProduct.Price,
-							transformedProduct.Currency, transformedProduct.SKU, transformedProduct.Brand,
-							transformedProduct.Category, imageURLsArray, transformedProduct.Variants,
-							string(enhancedMetadataJSON), "ACTIVE", existingID)
-						if err != nil {
-							fmt.Printf("🔍 Update error: %v\n", err)
-						} else {
-							fmt.Printf("🔍 Product updated successfully\n")
-						}
+					if err != nil {
+						fmt.Printf("🔍 Database error during update: %v\n", err)
 					} else {
-						// Product doesn't exist, insert it
-						_, err = db.Exec(`
-								INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, updated_at)
-								VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
-							`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
-							transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
-							transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
-							transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
+						fmt.Printf("🔍 Product successfully updated with SEO metadata\n")
 					}
+				} else if err == sql.ErrNoRows {
+					// Product doesn't exist, insert it
+					_, err = db.Exec(`
+						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, created_at, updated_at)
+						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+					`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
+						transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
+						transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
+						transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
+
+					if err != nil {
+						fmt.Printf("🔍 Database error during insert: %v\n", err)
+					} else {
+						fmt.Printf("🔍 Product successfully inserted with SEO metadata\n")
+					}
+				} else {
+					fmt.Printf("🔍 Database error during check: %v\n", err)
 				}
 
 				if err != nil {
