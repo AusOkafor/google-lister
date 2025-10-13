@@ -104,8 +104,13 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 	log.Printf("🔄 Starting Shopify product sync for connector %s, shop %s", connectorID, shopDomain)
 	log.Printf("🔑 Access token length: %d", len(accessToken))
 
-	// Fetch products from Shopify
-	url := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", shopDomain)
+	// Fetch products from Shopify - clean the shop domain first
+	cleanDomain := shopDomain
+	if strings.HasSuffix(shopDomain, ".myshopify.com") {
+		cleanDomain = strings.TrimSuffix(shopDomain, ".myshopify.com")
+	}
+
+	url := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", cleanDomain)
 	log.Printf("🌐 Making request to: %s", url)
 
 	req, err := http.NewRequest("GET", url, nil)
