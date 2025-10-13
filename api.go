@@ -3306,13 +3306,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 			// Save connector to Supabase database
 			_, err := db.Exec(`
-				INSERT INTO connectors (id, name, type, status, shop_domain, access_token, created_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)
+				INSERT INTO connectors (id, name, type, status, shop_domain, access_token, organization_id, created_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 				ON CONFLICT (id) DO UPDATE SET
 					name = EXCLUDED.name,
 					status = EXCLUDED.status,
-					access_token = EXCLUDED.access_token
-			`, connectorID, fmt.Sprintf("Shopify Store - %s", shop), "SHOPIFY", "ACTIVE", shop, mockAccessToken, time.Now())
+					access_token = EXCLUDED.access_token,
+					organization_id = EXCLUDED.organization_id
+			`, connectorID, fmt.Sprintf("Shopify Store - %s", shop), "SHOPIFY", "ACTIVE", shop, mockAccessToken, globalOrganizationID, time.Now())
 
 			if err != nil {
 				c.Header("Content-Type", "text/html")
@@ -7434,13 +7435,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 			// Save connector to Supabase database
 			_, err = db.Exec(`
-					INSERT INTO connectors (id, name, type, status, shop_domain, access_token, created_at)
-					VALUES ($1, $2, $3, $4, $5, $6, $7)
+					INSERT INTO connectors (id, name, type, status, shop_domain, access_token, organization_id, created_at)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 					ON CONFLICT (id) DO UPDATE SET
 						name = EXCLUDED.name,
 						status = EXCLUDED.status,
-						access_token = EXCLUDED.access_token
-				`, connectorID, fmt.Sprintf("Shopify Store - %s", shop), "SHOPIFY", "ACTIVE", shop, accessToken, time.Now())
+						access_token = EXCLUDED.access_token,
+						organization_id = EXCLUDED.organization_id
+				`, connectorID, fmt.Sprintf("Shopify Store - %s", shop), "SHOPIFY", "ACTIVE", shop, accessToken, globalOrganizationID, time.Now())
 
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save connector to database"})
