@@ -102,16 +102,41 @@ var (
 // syncShopifyProducts syncs products from Shopify store
 func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string) {
 	log.Printf("🔄 Starting Shopify product sync for connector %s, shop %s", connectorID, shopDomain)
-	log.Printf("🔑 Access token length: %d", len(accessToken))
+	// Show first 10 characters of token for debugging (but not the full token for security)
+	tokenPreview := accessToken
+	if len(accessToken) > 10 {
+		tokenPreview = accessToken[:10]
+	}
+	log.Printf("🔑 Access token length: %d, first 10 chars: %s", len(accessToken), tokenPreview)
 
 	// Fetch products from Shopify - clean the shop domain first
 	cleanDomain := shopDomain
 	if strings.HasSuffix(shopDomain, ".myshopify.com") {
 		cleanDomain = strings.TrimSuffix(shopDomain, ".myshopify.com")
 	}
+	log.Printf("🏪 Original domain: %s, Clean domain: %s", shopDomain, cleanDomain)
 
 	// Create HTTP client
 	client := &http.Client{Timeout: 60 * time.Second}
+
+	// Test basic connectivity first
+	connectivityURL := fmt.Sprintf("https://%s.myshopify.com", cleanDomain)
+	log.Printf("🌐 Testing basic connectivity to: %s", connectivityURL)
+
+	connectivityReq, err := http.NewRequest("GET", connectivityURL, nil)
+	if err != nil {
+		log.Printf("❌ Failed to create connectivity test request: %v", err)
+		return
+	}
+
+	connectivityResp, err := client.Do(connectivityReq)
+	if err != nil {
+		log.Printf("❌ Connectivity test failed: %v", err)
+		log.Printf("❌ This suggests a network issue or invalid shop domain")
+		return
+	}
+	connectivityResp.Body.Close()
+	log.Printf("✅ Basic connectivity test passed: %d", connectivityResp.StatusCode)
 
 	// First, test the access token with a simple shop info call
 	testURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/shop.json", cleanDomain)
