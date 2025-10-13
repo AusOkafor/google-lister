@@ -101,10 +101,13 @@ var (
 
 // syncShopifyProducts syncs products from Shopify store
 func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string) {
-	log.Printf("🔄 Starting Shopify product sync for %s", shopDomain)
+	log.Printf("🔄 Starting Shopify product sync for connector %s, shop %s", connectorID, shopDomain)
+	log.Printf("🔑 Access token length: %d", len(accessToken))
 
 	// Fetch products from Shopify
 	url := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", shopDomain)
+	log.Printf("🌐 Making request to: %s", url)
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Printf("❌ Failed to create Shopify request: %v", err)
@@ -122,8 +125,11 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 	}
 	defer resp.Body.Close()
 
+	log.Printf("📡 Shopify API response status: %d", resp.StatusCode)
+
 	if resp.StatusCode != 200 {
-		log.Printf("❌ Shopify API returned status %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("❌ Shopify API error response: %s", string(body))
 		return
 	}
 
@@ -140,8 +146,15 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 
 	log.Printf("✅ Fetched %d products from Shopify", len(result.Products))
 
+	if len(result.Products) == 0 {
+		log.Printf("⚠️ No products found in Shopify store")
+		return
+	}
+
 	// Insert/update products in database
-	for _, product := range result.Products {
+	successCount := 0
+	for i, product := range result.Products {
+		log.Printf("📦 Processing product %d/%d: %s (ID: %d)", i+1, len(result.Products), product.Title, product.ID)
 		imagesJSON, _ := json.Marshal(product.Images)
 		metadataJSON, _ := json.Marshal(product)
 
@@ -164,10 +177,13 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 
 		if err != nil {
 			log.Printf("❌ Failed to insert product %s: %v", externalID, err)
+		} else {
+			successCount++
+			log.Printf("✅ Successfully inserted product %s", externalID)
 		}
 	}
 
-	log.Printf("✅ Shopify sync completed for %s", shopDomain)
+	log.Printf("✅ Shopify sync completed for %s - %d/%d products imported", shopDomain, successCount, len(result.Products))
 }
 
 // Helper functions for sync
