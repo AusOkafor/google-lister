@@ -7775,12 +7775,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						UPDATE products SET 
 							title = $1, description = $2, price = $3, currency = $4,
 							sku = $5, brand = $6, category = $7, images = $8,
-							variants = $9, metadata = $10, status = $11, updated_at = NOW()
-						WHERE connector_id = $12 AND external_id = $13
+							variants = $9, metadata = $10, status = $11, organization_id = $12, updated_at = NOW()
+						WHERE connector_id = $13 AND external_id = $14
 					`, transformedProduct.Title, transformedProduct.Description,
 						transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
 						transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
-						transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE",
+						transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE", globalOrganizationID,
 						connectorID, transformedProduct.ExternalID)
 
 					if err != nil {
@@ -7791,12 +7791,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				} else if err == sql.ErrNoRows {
 					// Product doesn't exist, insert it
 					_, err = db.Exec(`
-						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, created_at, updated_at)
-						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, organization_id, created_at, updated_at)
+						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
 					`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
 						transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
 						transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
-						transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE")
+						transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE", globalOrganizationID)
 
 					if err != nil {
 						fmt.Printf("🔍 Database error during insert: %v\n", err)
