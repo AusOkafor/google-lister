@@ -5423,14 +5423,30 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 					var notifs []map[string]interface{}
 					for rows.Next() {
-						var id, notifType, title, message, priority, entityType, entityID, entityName, metadata, createdAt string
+						var id, notifType, title, message, priority, entityType, metadata, createdAt string
 						var isRead bool
-						var readAt sql.NullString
+						var entityID, entityName, readAt sql.NullString
 
 						err := rows.Scan(&id, &notifType, &title, &message, &priority, &isRead,
 							&entityType, &entityID, &entityName, &metadata, &createdAt, &readAt)
 						if err != nil {
+							log.Printf("Failed to scan notification row: %v", err)
 							continue
+						}
+
+						entityIDStr := ""
+						if entityID.Valid {
+							entityIDStr = entityID.String
+						}
+
+						entityNameStr := ""
+						if entityName.Valid {
+							entityNameStr = entityName.String
+						}
+
+						readAtStr := ""
+						if readAt.Valid {
+							readAtStr = readAt.String
 						}
 
 						notifs = append(notifs, map[string]interface{}{
@@ -5441,11 +5457,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							"priority":   priority,
 							"isRead":     isRead,
 							"entityType": entityType,
-							"entityId":   entityID,
-							"entityName": entityName,
+							"entityId":   entityIDStr,
+							"entityName": entityNameStr,
 							"metadata":   metadata,
 							"createdAt":  createdAt,
-							"readAt":     readAt.String,
+							"readAt":     readAtStr,
 						})
 					}
 
