@@ -119,28 +119,8 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 	// Create HTTP client
 	client := &http.Client{Timeout: 60 * time.Second}
 
-	// Test basic connectivity first
-	connectivityURL := fmt.Sprintf("https://%s.myshopify.com", cleanDomain)
-	log.Printf("🌐 Testing basic connectivity to: %s", connectivityURL)
-
-	connectivityReq, err := http.NewRequest("GET", connectivityURL, nil)
-	if err != nil {
-		log.Printf("❌ Failed to create connectivity test request: %v", err)
-		return
-	}
-
-	connectivityResp, err := client.Do(connectivityReq)
-	if err != nil {
-		log.Printf("❌ Connectivity test failed: %v", err)
-		log.Printf("❌ This suggests a network issue or invalid shop domain")
-		log.Printf("💡 Possible issues:")
-		log.Printf("   1. Shop domain '%s' doesn't exist", cleanDomain)
-		log.Printf("   2. Shop domain format is incorrect")
-		log.Printf("   3. Network connectivity issue from Vercel")
-		return
-	}
-	connectivityResp.Body.Close()
-	log.Printf("✅ Basic connectivity test passed: %d", connectivityResp.StatusCode)
+	// Skip basic connectivity test for now - go directly to API
+	log.Printf("🚀 Skipping basic connectivity test, going directly to Shopify API")
 
 	// First, test the access token with a simple shop info call
 	testURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/shop.json", cleanDomain)
