@@ -116,8 +116,17 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 	}
 	log.Printf("🏪 Original domain: %s, Clean domain: %s", shopDomain, cleanDomain)
 
-	// Create HTTP client
-	client := &http.Client{Timeout: 60 * time.Second}
+	// Create HTTP client with longer timeout and custom transport
+	transport := &http.Transport{
+		DialTimeout:           30 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	client := &http.Client{
+		Timeout:   120 * time.Second,
+		Transport: transport,
+	}
 
 	// Skip basic connectivity test for now - go directly to API
 	log.Printf("🚀 Skipping basic connectivity test, going directly to Shopify API")
@@ -135,9 +144,23 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 	testReq.Header.Set("X-Shopify-Access-Token", accessToken)
 	testReq.Header.Set("Content-Type", "application/json")
 
-	testResp, err := client.Do(testReq)
+	// Try the request with retry logic
+	var testResp *http.Response
+	for attempt := 1; attempt <= 3; attempt++ {
+		log.Printf("🔄 Attempt %d/3: Testing shop info API", attempt)
+		testResp, err = client.Do(testReq)
+		if err == nil {
+			break
+		}
+		log.Printf("❌ Attempt %d failed: %v", attempt, err)
+		if attempt < 3 {
+			log.Printf("⏳ Waiting 5 seconds before retry...")
+			time.Sleep(5 * time.Second)
+		}
+	}
+
 	if err != nil {
-		log.Printf("❌ Test request failed: %v", err)
+		log.Printf("❌ All 3 attempts failed: %v", err)
 		return
 	}
 	defer testResp.Body.Close()
