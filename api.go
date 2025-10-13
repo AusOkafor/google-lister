@@ -119,11 +119,11 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 	// Create HTTP client with longer timeout and custom transport
 	transport := &http.Transport{
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second, // Increased for products API
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 	client := &http.Client{
-		Timeout:   120 * time.Second,
+		Timeout:   300 * time.Second, // 5 minutes for products API
 		Transport: transport,
 	}
 
@@ -189,9 +189,23 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 
 	req.Header.Set("X-Shopify-Access-Token", accessToken)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	// Try the products API request with retry logic
+	var resp *http.Response
+	for attempt := 1; attempt <= 3; attempt++ {
+		log.Printf("🔄 Attempt %d/3: Fetching products from Shopify API", attempt)
+		resp, err = client.Do(req)
+		if err == nil {
+			break
+		}
+		log.Printf("❌ Attempt %d failed: %v", attempt, err)
+		if attempt < 3 {
+			log.Printf("⏳ Waiting 10 seconds before retry...")
+			time.Sleep(10 * time.Second)
+		}
+	}
+
 	if err != nil {
-		log.Printf("❌ Failed to fetch Shopify products: %v", err)
+		log.Printf("❌ All 3 attempts failed to fetch products: %v", err)
 		return
 	}
 	defer resp.Body.Close()
