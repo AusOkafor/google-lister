@@ -8778,11 +8778,6 @@ func triggerWebhook(db *sql.DB, feedID string, event string, payload map[string]
 
 			log.Printf("✅ Found webhook: id=%s, url=%s, event=%s", webhookID, url, event)
 
-			secretStr := ""
-			if secret.Valid {
-				secretStr = secret.String
-			}
-
 			// Send webhook with retries
 			deliverWebhook(db, webhookID, feedID, url, event, payload, retryCount, timeoutSeconds)
 		}
