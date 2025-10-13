@@ -150,17 +150,17 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 		_, err := db.Exec(`
 			INSERT INTO products (
 				external_id, title, description, price, currency, sku,
-				brand, category, images, status, metadata, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+				brand, category, images, status, metadata, organization_id, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
 			ON CONFLICT (external_id) 
 			DO UPDATE SET
 				title = $2, description = $3, price = $4, currency = $5,
 				sku = $6, brand = $7, category = $8, images = $9,
-				status = $10, metadata = $11, updated_at = NOW()
+				status = $10, metadata = $11, organization_id = $12, updated_at = NOW()
 		`, externalID, product.Title, product.Description,
 			getFirstVariantPrice(product), "USD", getFirstVariantSKU(product),
 			product.Vendor, product.ProductType, string(imagesJSON),
-			product.Status, string(metadataJSON))
+			product.Status, string(metadataJSON), globalOrganizationID)
 
 		if err != nil {
 			log.Printf("❌ Failed to insert product %s: %v", externalID, err)
@@ -7194,12 +7194,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		`, connectorID)
 
 		// Trigger sync based on connector type
-		switch connectorType {
-		case "shopify":
+		switch strings.ToUpper(connectorType) {
+		case "SHOPIFY":
 			// Trigger Shopify sync
 			go syncShopifyProducts(db, connectorID, shopDomain, accessToken)
 			c.JSON(http.StatusOK, gin.H{"message": "Shopify sync started"})
-		case "woocommerce":
+		case "WOOCOMMERCE":
 			c.JSON(http.StatusOK, gin.H{"message": "WooCommerce sync will be implemented"})
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Sync not supported for this connector type"})
