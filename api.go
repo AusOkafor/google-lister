@@ -118,7 +118,6 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 
 	// Create HTTP client with longer timeout and custom transport
 	transport := &http.Transport{
-		DialTimeout:           30 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
