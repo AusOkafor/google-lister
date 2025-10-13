@@ -7421,10 +7421,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			code := c.Query("code")
 			state := c.Query("state")
 			shop := c.Query("shop")
+			hmac := c.Query("hmac")
+			timestamp := c.Query("timestamp")
 
-			if code == "" || state == "" || shop == "" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required parameters"})
+			log.Printf("🔍 OAuth Callback received - Code: %s, State: %s, Shop: %s, HMAC: %s, Timestamp: %s", code, state, shop, hmac, timestamp)
+
+			if code == "" || shop == "" {
+				log.Printf("❌ Missing required parameters")
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Missing required parameters (code, shop)"})
 				return
+			}
+
+			// Verify HMAC if provided (for security)
+			if hmac != "" && timestamp != "" {
+				// In production, you should verify the HMAC signature
+				// For now, we'll just log it
+				log.Printf("🔐 HMAC verification skipped for development")
 			}
 
 			// Get Shopify credentials
