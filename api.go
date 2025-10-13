@@ -7706,6 +7706,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		// Product Sync
 		shopify.POST("/:id/sync", func(c *gin.Context) {
 			connectorID := c.Param("id")
+			organizationID := getOrCreateOrganizationID()
 
 			// Get connector from database
 			var connector struct {
@@ -7714,9 +7715,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				AccessToken string
 			}
 
-			err := db.QueryRow("SELECT id, shop_domain, access_token FROM connectors WHERE id = $1", connectorID).Scan(
+			err := db.QueryRow("SELECT id, shop_domain, access_token FROM connectors WHERE id = $1 AND organization_id = $2", connectorID, organizationID).Scan(
 				&connector.ID, &connector.ShopDomain, &connector.AccessToken)
 			if err != nil {
+				log.Printf("❌ Connector not found: %v", err)
 				c.JSON(http.StatusNotFound, gin.H{"error": "Connector not found"})
 				return
 			}
