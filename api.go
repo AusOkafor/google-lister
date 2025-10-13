@@ -7451,11 +7451,32 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Exchange authorization code for access token
+			// Exchange authorization code for access token immediately
+			log.Printf("🔄 Attempting token exchange immediately...")
 			accessToken, err := exchangeCodeForToken(code, shop, clientID, clientSecret)
 			if err != nil {
 				log.Printf("❌ Token exchange failed: %v", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to exchange code for token: %v", err)})
+				// Return a user-friendly error page instead of JSON
+				c.Header("Content-Type", "text/html")
+				c.String(500, `
+					<!DOCTYPE html>
+					<html>
+					<head>
+						<title>Connection Failed</title>
+						<style>
+							body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+							.error { color: #e74c3c; }
+							.success { color: #27ae60; }
+						</style>
+					</head>
+					<body>
+						<h1 class="error">❌ Connection Failed</h1>
+						<p>The authorization code may have expired or been used already.</p>
+						<p><strong>Error:</strong> %v</p>
+						<p><a href="/">Return to Dashboard</a></p>
+					</body>
+					</html>
+				`, err)
 				return
 			}
 
@@ -7492,20 +7513,31 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Return success with connector info and webhook status
-			c.JSON(http.StatusOK, gin.H{
-				"message":      "Shopify store connected successfully",
-				"shop":         shop,
-				"state":        state,
-				"connector_id": connectorID,
-				"webhooks": gin.H{
-					"setup_completed":     true,
-					"successful_webhooks": successCount,
-					"total_webhooks":      len(webhookResults),
-					"details":             webhookResults,
-				},
-				"note": "Real access token obtained, stored, and webhooks automatically configured",
-			})
+			// Return success page instead of JSON
+			c.Header("Content-Type", "text/html")
+			c.String(200, `
+				<!DOCTYPE html>
+				<html>
+				<head>
+					<title>Connection Successful</title>
+					<style>
+						body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+						.success { color: #27ae60; }
+						.info { color: #3498db; margin: 20px 0; }
+					</style>
+				</head>
+				<body>
+					<h1 class="success">✅ Shopify Store Connected Successfully!</h1>
+					<div class="info">
+						<p><strong>Store:</strong> %s</p>
+						<p><strong>Connector ID:</strong> %s</p>
+						<p><strong>Webhooks Configured:</strong> %d/%d</p>
+					</div>
+					<p>You can now close this window and return to your dashboard.</p>
+					<p><a href="/">Return to Dashboard</a></p>
+				</body>
+				</html>
+			`, shop, connectorID, successCount, len(webhookResults))
 		})
 
 		// Shopify Webhook
