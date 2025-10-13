@@ -110,6 +110,40 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 		cleanDomain = strings.TrimSuffix(shopDomain, ".myshopify.com")
 	}
 
+	// Create HTTP client
+	client := &http.Client{Timeout: 60 * time.Second}
+
+	// First, test the access token with a simple shop info call
+	testURL := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/shop.json", cleanDomain)
+	log.Printf("🧪 Testing access token with shop info: %s", testURL)
+
+	testReq, err := http.NewRequest("GET", testURL, nil)
+	if err != nil {
+		log.Printf("❌ Failed to create test request: %v", err)
+		return
+	}
+
+	testReq.Header.Set("X-Shopify-Access-Token", accessToken)
+	testReq.Header.Set("Content-Type", "application/json")
+
+	testResp, err := client.Do(testReq)
+	if err != nil {
+		log.Printf("❌ Test request failed: %v", err)
+		return
+	}
+	defer testResp.Body.Close()
+
+	log.Printf("🧪 Shop info test response: %d", testResp.StatusCode)
+
+	if testResp.StatusCode != 200 {
+		body, _ := io.ReadAll(testResp.Body)
+		log.Printf("❌ Shop info test failed: %s", string(body))
+		return
+	}
+
+	log.Printf("✅ Access token is valid, proceeding with product sync")
+
+	// Now fetch products
 	url := fmt.Sprintf("https://%s.myshopify.com/admin/api/2023-10/products.json?limit=250", cleanDomain)
 	log.Printf("🌐 Making request to: %s", url)
 
@@ -121,8 +155,6 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 
 	req.Header.Set("X-Shopify-Access-Token", accessToken)
 	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("❌ Failed to fetch Shopify products: %v", err)
