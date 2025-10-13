@@ -7109,12 +7109,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	api.GET("/connectors", func(c *gin.Context) {
 		organizationID := getOrCreateOrganizationID()
 
-		// Query connectors from database filtered by organization
+		// Query connectors from database filtered by organization with product counts
 		rows, err := db.Query(`
-			SELECT id, name, type, status, shop_domain, created_at, last_sync 
-			FROM connectors 
-			WHERE organization_id = $1 
-			ORDER BY created_at DESC
+			SELECT c.id, c.name, c.type, c.status, c.shop_domain, c.created_at, c.last_sync,
+			       COALESCE(p.product_count, 0) as products_count
+			FROM connectors c
+			LEFT JOIN (
+				SELECT connector_id, COUNT(*) as product_count 
+				FROM products 
+				WHERE organization_id = $1 
+				GROUP BY connector_id
+			) p ON c.id = p.connector_id
+			WHERE c.organization_id = $1 
+			ORDER BY c.created_at DESC
 		`, organizationID)
 
 		if err != nil {
@@ -7130,8 +7137,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			var shopDomain sql.NullString
 			var createdAt time.Time
 			var lastSync sql.NullTime
+			var productsCount int
 
-			err := rows.Scan(&id, &name, &connectorType, &status, &shopDomain, &createdAt, &lastSync)
+			err := rows.Scan(&id, &name, &connectorType, &status, &shopDomain, &createdAt, &lastSync, &productsCount)
 			if err != nil {
 				log.Printf("Failed to scan connector: %v", err)
 				continue
@@ -7149,13 +7157,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			connectors = append(connectors, map[string]interface{}{
-				"id":          id,
-				"name":        name,
-				"type":        connectorType,
-				"status":      status,
-				"shop_domain": shopDomainStr,
-				"created_at":  createdAt.Format(time.RFC3339),
-				"last_sync":   lastSyncStr,
+				"id":             id,
+				"name":           name,
+				"type":           connectorType,
+				"status":         status,
+				"shop_domain":    shopDomainStr,
+				"created_at":     createdAt.Format(time.RFC3339),
+				"last_sync":      lastSyncStr,
+				"products_count": productsCount,
 			})
 		}
 
