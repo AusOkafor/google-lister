@@ -8790,11 +8790,76 @@ func triggerWebhook(db *sql.DB, feedID string, event string, payload map[string]
 	}()
 }
 
+// createNotificationFromWebhook creates notification directly from webhook payload
+func createNotificationFromWebhook(db *sql.DB, payload map[string]interface{}) {
+	event := payload["event"]
+	feedName, _ := payload["feed_name"].(string)
+
+	var notifType, title, message string
+	var priority string = "normal"
+
+	switch event {
+	case "feed.generated":
+		notifType = "feed_generated"
+		title = fmt.Sprintf("Feed Generated: %v", feedName)
+		productsIncluded := 0
+		if pi, ok := payload["products_included"].(float64); ok {
+			productsIncluded = int(pi)
+		}
+		generationTime := 0.0
+		if gt, ok := payload["generation_time_ms"].(float64); ok {
+			generationTime = gt / 1000.0
+		}
+		message = fmt.Sprintf("Successfully generated %d products in %.2fs", productsIncluded, generationTime)
+
+	case "feed.failed":
+		notifType = "feed_failed"
+		title = fmt.Sprintf("Feed Generation Failed: %v", feedName)
+		errorMsg := "Unknown error"
+		if em, ok := payload["error"].(string); ok {
+			errorMsg = em
+		}
+		message = fmt.Sprintf("Feed generation failed: %s", errorMsg)
+		priority = "high"
+	}
+
+	metadataJSON, _ := json.Marshal(payload)
+
+	_, err := db.Exec(`
+		INSERT INTO notifications (
+			organization_id, type, title, message, priority,
+			entity_type, entity_id, entity_name, metadata
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, getOrCreateOrganizationID(), notifType, title, message, priority,
+		"feed", payload["feed_id"], feedName, string(metadataJSON))
+
+	if err != nil {
+		log.Printf("❌ Failed to create notification: %v", err)
+	} else {
+		log.Printf("✅ Notification created successfully!")
+	}
+}
+
 // deliverWebhook delivers webhook with retry logic
 func deliverWebhook(db *sql.DB, webhookID, feedID, url, event string, payload map[string]interface{}, maxRetries, timeoutSeconds int) {
 	payloadJSON, _ := json.Marshal(payload)
 	log.Printf("📤 Delivering webhook to %s (event=%s, attempt=1/%d)", url, event, maxRetries+1)
 	log.Printf("📦 Payload: %s", string(payloadJSON))
+
+	// If webhook URL is to the same server, create notification directly to avoid timeout
+	if strings.Contains(url, "product-lister-eight.vercel.app") && strings.Contains(url, "/webhook-receiver") {
+		log.Printf("🔄 Internal webhook detected, creating notification directly...")
+		createNotificationFromWebhook(db, payload)
+		db.Exec(`
+			UPDATE feed_webhooks 
+			SET last_triggered_at = NOW(), 
+			    total_deliveries = total_deliveries + 1,
+			    successful_deliveries = successful_deliveries + 1,
+			    updated_at = NOW()
+			WHERE id = $1
+		`, webhookID)
+		return
+	}
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		startTime := time.Now()
