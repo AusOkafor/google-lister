@@ -1066,17 +1066,25 @@ func exchangeCodeForToken(code, shop, clientID, clientSecret string) (string, er
 
 	// Make request to Shopify
 	tokenURL := fmt.Sprintf("https://%s.myshopify.com/admin/oauth/access_token", cleanDomain)
+	log.Printf("🔄 Making token request to: %s", tokenURL)
+
 	resp, err := http.PostForm(tokenURL, data)
 	if err != nil {
+		log.Printf("❌ HTTP request failed: %v", err)
 		return "", err
 	}
 	defer resp.Body.Close()
 
+	log.Printf("📡 Response status: %d", resp.StatusCode)
+
 	// Read response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("❌ Failed to read response body: %v", err)
 		return "", err
 	}
+
+	log.Printf("📄 Response body: %s", string(body))
 
 	// Parse JSON response
 	var tokenResponse struct {
@@ -1085,12 +1093,16 @@ func exchangeCodeForToken(code, shop, clientID, clientSecret string) (string, er
 	}
 
 	if err := json.Unmarshal(body, &tokenResponse); err != nil {
+		log.Printf("❌ JSON parse error: %v", err)
 		return "", err
 	}
 
 	if tokenResponse.AccessToken == "" {
+		log.Printf("❌ No access token in response")
 		return "", fmt.Errorf("no access token in response: %s", string(body))
 	}
+
+	log.Printf("✅ Successfully obtained access token")
 
 	return tokenResponse.AccessToken, nil
 }
@@ -7419,7 +7431,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			clientID := os.Getenv("SHOPIFY_CLIENT_ID")
 			clientSecret := os.Getenv("SHOPIFY_CLIENT_SECRET")
 
+			log.Printf("🔑 Shopify OAuth Debug - Code: %s, Shop: %s, ClientID: %s", code, shop, clientID)
+
 			if clientID == "" || clientSecret == "" {
+				log.Printf("❌ Missing Shopify credentials - ClientID: %s, ClientSecret: %s", clientID, clientSecret)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Shopify credentials not configured"})
 				return
 			}
@@ -7427,7 +7442,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Exchange authorization code for access token
 			accessToken, err := exchangeCodeForToken(code, shop, clientID, clientSecret)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to exchange code for token"})
+				log.Printf("❌ Token exchange failed: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to exchange code for token: %v", err)})
 				return
 			}
 
