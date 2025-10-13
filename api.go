@@ -47,6 +47,7 @@ type ShopifyProduct struct {
 	ID          int64              `json:"id"`
 	Title       string             `json:"title"`
 	Description string             `json:"body_html"`
+	Status      string             `json:"status"`
 	Vendor      string             `json:"vendor"`
 	ProductType string             `json:"product_type"`
 	Images      []ShopifyImage     `json:"images"`
@@ -144,6 +145,8 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 		imagesJSON, _ := json.Marshal(product.Images)
 		metadataJSON, _ := json.Marshal(product)
 
+		externalID := fmt.Sprintf("%d", product.ID)
+
 		_, err := db.Exec(`
 			INSERT INTO products (
 				external_id, title, description, price, currency, sku,
@@ -154,13 +157,13 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 				title = $2, description = $3, price = $4, currency = $5,
 				sku = $6, brand = $7, category = $8, images = $9,
 				status = $10, metadata = $11, updated_at = NOW()
-		`, product.ID, product.Title, product.BodyHTML,
+		`, externalID, product.Title, product.Description,
 			getFirstVariantPrice(product), "USD", getFirstVariantSKU(product),
 			product.Vendor, product.ProductType, string(imagesJSON),
 			product.Status, string(metadataJSON))
 
 		if err != nil {
-			log.Printf("❌ Failed to insert product %d: %v", product.ID, err)
+			log.Printf("❌ Failed to insert product %s: %v", externalID, err)
 		}
 	}
 
