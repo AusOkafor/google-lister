@@ -133,6 +133,10 @@ func syncShopifyProducts(db *sql.DB, connectorID, shopDomain, accessToken string
 	if err != nil {
 		log.Printf("❌ Connectivity test failed: %v", err)
 		log.Printf("❌ This suggests a network issue or invalid shop domain")
+		log.Printf("💡 Possible issues:")
+		log.Printf("   1. Shop domain '%s' doesn't exist", cleanDomain)
+		log.Printf("   2. Shop domain format is incorrect")
+		log.Printf("   3. Network connectivity issue from Vercel")
 		return
 	}
 	connectivityResp.Body.Close()
@@ -7503,6 +7507,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			timestamp := c.Query("timestamp")
 
 			log.Printf("🔍 OAuth Callback received - Code: %s, State: %s, Shop: %s, HMAC: %s, Timestamp: %s", code, state, shop, hmac, timestamp)
+			log.Printf("🏪 Shop parameter from Shopify: '%s' (length: %d)", shop, len(shop))
 
 			if code == "" || shop == "" {
 				log.Printf("❌ Missing required parameters")
@@ -7559,6 +7564,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			connectorID := fmt.Sprintf("connector_%d", time.Now().Unix())
+
+			log.Printf("💾 Storing connector - ID: %s, Shop: %s", connectorID, shop)
 
 			// Save connector to Supabase database
 			_, err = db.Exec(`
