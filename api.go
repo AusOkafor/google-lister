@@ -2733,7 +2733,7 @@ func processProductCreate(product ShopifyProduct, shopDomain, topic string) map[
 		var existingID string
 		checkErr := db.QueryRow(`
 			SELECT id FROM products 
-			WHERE connector_id = $1 AND external_id = $2
+			WHERE connector_id::text = $1::text AND external_id = $2
 		`, connectorID, transformedProduct.ExternalID).Scan(&existingID)
 
 		if checkErr == nil {
@@ -2851,7 +2851,7 @@ func processInventoryUpdate(inventoryData struct {
 	var productID string
 	err = db.QueryRow(`
 		SELECT id FROM products 
-		WHERE connector_id = $1 AND variants::text LIKE $2
+		WHERE connector_id::text = $1::text AND variants::text LIKE $2
 	`, connectorID, fmt.Sprintf("%%\"id\": %d%%", inventoryData.InventoryItemID)).Scan(&productID)
 
 	// If not found, create a generic inventory record
@@ -5003,9 +5003,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					connectorFilter := ""
 					connectorArgs := []interface{}{}
 					if connectorID != "" {
-						connectorFilter = " AND connector_id = $1"
+						// Cast both sides to text to handle potential UUID/VARCHAR mismatch
+						connectorFilter = " AND connector_id::text = $1::text"
 						connectorArgs = []interface{}{connectorID}
-						log.Printf("🔍 Filtering by connector_id: %s", connectorID)
+						log.Printf("🔍 Filtering by connector_id: %s (type: %T)", connectorID, connectorID)
 						// Adjust all existing filter args by adding 1 to their position
 						for i := range filterArgs {
 							filterArgs[i] = fmt.Sprintf("$%d", i+2)
@@ -7948,7 +7949,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Check if product exists
 				var existingID string
-				err := db.QueryRow("SELECT id FROM products WHERE connector_id = $1 AND external_id = $2", connectorID, transformedProduct.ExternalID).Scan(&existingID)
+				err := db.QueryRow("SELECT id FROM products WHERE connector_id::text = $1::text AND external_id = $2", connectorID, transformedProduct.ExternalID).Scan(&existingID)
 
 				if err == nil {
 					// Product exists, update it
@@ -7957,7 +7958,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 									title = $1, description = $2, price = $3, currency = $4, 
 									sku = $5, brand = $6, category = $7, images = $8, 
 							variants = $9, metadata = $10, status = $11, organization_id = $12, updated_at = NOW()
-						WHERE connector_id = $13 AND external_id = $14
+						WHERE connector_id::text = $13::text AND external_id = $14
 					`, transformedProduct.Title, transformedProduct.Description,
 						transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
 						transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
