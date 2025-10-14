@@ -5005,10 +5005,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					if connectorID != "" {
 						connectorFilter = " AND connector_id = $1"
 						connectorArgs = []interface{}{connectorID}
+						log.Printf("🔍 Filtering by connector_id: %s", connectorID)
 						// Adjust all existing filter args by adding 1 to their position
 						for i := range filterArgs {
 							filterArgs[i] = fmt.Sprintf("$%d", i+2)
 						}
+					} else {
+						log.Printf("⚠️ No connector_id specified, will fetch all products")
 					}
 
 					// Add AND before whereClause if it exists
@@ -5029,7 +5032,23 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					allArgs := append([]interface{}{organizationID}, connectorArgs...)
 					allArgs = append(allArgs, filterArgs...)
 
+					log.Printf("🔍 Final query: %s", query)
+					log.Printf("🔍 Query args: %+v", allArgs)
+
 					rows, err := db.Query(query, allArgs...)
+
+					// Count products for debugging
+					if err == nil {
+						productCount := 0
+						for rows.Next() {
+							productCount++
+						}
+						rows.Close()
+						log.Printf("🔍 Found %d products with connector filter", productCount)
+
+						// Re-execute the query for actual processing
+						rows, err = db.Query(query, allArgs...)
+					}
 
 					// If connector_id type conversion fails, try without connector filter
 					if err != nil && (strings.Contains(err.Error(), "operator does not exist") || strings.Contains(err.Error(), "invalid input syntax")) {
@@ -5045,7 +5064,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 						// Use only organization_id and filter args
 						allArgs = append([]interface{}{organizationID}, filterArgs...)
+						log.Printf("🔍 Fallback query: %s", query)
+						log.Printf("🔍 Fallback args: %+v", allArgs)
 						rows, err = db.Query(query, allArgs...)
+
+						// Count products in fallback query
+						if err == nil {
+							productCount := 0
+							for rows.Next() {
+								productCount++
+							}
+							rows.Close()
+							log.Printf("🔍 Found %d products in fallback query (no connector filter)", productCount)
+
+							// Re-execute the query for actual processing
+							rows, err = db.Query(query, allArgs...)
+						}
 					}
 					if err != nil {
 						log.Printf("Failed to fetch products: %v", err)
