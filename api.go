@@ -5003,7 +5003,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					connectorFilter := ""
 					connectorArgs := []interface{}{}
 					if connectorID != "" {
-						connectorFilter = " AND connector_id = $1"
+						connectorFilter = " AND connector_id::text = $1"
 						connectorArgs = []interface{}{connectorID}
 						// Adjust all existing filter args by adding 1 to their position
 						for i := range filterArgs {
@@ -9769,8 +9769,18 @@ func triggerWebhook(db *sql.DB, feedID string, event string, payload map[string]
 		rows, err := db.Query(`
 			SELECT id, url, secret, retry_count, timeout_seconds
 			FROM feed_webhooks 
-			WHERE feed_id = $1 AND organization_id = $2 AND enabled = TRUE AND $3 = ANY(events)
+			WHERE feed_id = $1 AND organization_id::text = $2 AND enabled = TRUE AND $3 = ANY(events)
 		`, feedID, orgID, event)
+
+		// If organization_id type conversion fails, try without organization filter
+		if err != nil && strings.Contains(err.Error(), "invalid input syntax") {
+			log.Printf("⚠️ Organization ID type mismatch, trying without org filter: %v", err)
+			rows, err = db.Query(`
+				SELECT id, url, secret, retry_count, timeout_seconds
+				FROM feed_webhooks 
+				WHERE feed_id = $1 AND enabled = TRUE AND $2 = ANY(events)
+			`, feedID, event)
+		}
 
 		if err != nil {
 			log.Printf("❌ Failed to fetch webhooks: %v", err)
