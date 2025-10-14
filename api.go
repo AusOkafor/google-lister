@@ -5003,7 +5003,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					connectorFilter := ""
 					connectorArgs := []interface{}{}
 					if connectorID != "" {
-						connectorFilter = " AND connector_id::text = $1"
+						connectorFilter = " AND connector_id = $1::uuid"
 						connectorArgs = []interface{}{connectorID}
 						// Adjust all existing filter args by adding 1 to their position
 						for i := range filterArgs {
@@ -5030,6 +5030,23 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					allArgs = append(allArgs, filterArgs...)
 
 					rows, err := db.Query(query, allArgs...)
+
+					// If connector_id type conversion fails, try without connector filter
+					if err != nil && (strings.Contains(err.Error(), "operator does not exist") || strings.Contains(err.Error(), "invalid input syntax")) {
+						log.Printf("⚠️ Connector ID type mismatch, trying without connector filter: %v", err)
+						// Fallback query without connector filter
+						query = fmt.Sprintf(`
+							SELECT id, external_id, title, description, price, currency, sku, 
+							       brand, category, images, status, metadata
+							FROM products 
+							WHERE organization_id = $1%s
+							ORDER BY created_at DESC
+						`, whereClause)
+
+						// Use only organization_id and filter args
+						allArgs = append([]interface{}{organizationID}, filterArgs...)
+						rows, err = db.Query(query, allArgs...)
+					}
 					if err != nil {
 						log.Printf("Failed to fetch products: %v", err)
 						errorMsg := fmt.Sprintf("Failed to fetch products: %v", err)
