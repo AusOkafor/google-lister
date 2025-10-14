@@ -4645,10 +4645,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Build query
 				query := `
 					SELECT 
-						id, name, channel, format, status, products_count, 
-						last_generated, created_at, updated_at, settings
-					FROM product_feeds 
-					WHERE organization_id = $1
+						pf.id, pf.name, pf.channel, pf.format, pf.status, pf.products_count, 
+						pf.last_generated, pf.created_at, pf.updated_at, pf.settings,
+						COALESCE(c.name, 'No Store') as connector_name,
+						COALESCE(c.type, '') as connector_type
+					FROM product_feeds pf
+					LEFT JOIN connectors c ON pf.connector_id = c.id
+					WHERE pf.organization_id = $1
 				`
 				args := []interface{}{getOrCreateOrganizationID()}
 
@@ -4669,12 +4672,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var feeds []map[string]interface{}
 				for rows.Next() {
-					var id, name, channel, format, status, createdAt, updatedAt string
+					var id, name, channel, format, status, createdAt, updatedAt, connectorName, connectorType string
 					var productsCount int
 					var lastGenerated sql.NullTime
 					var settings sql.NullString
 
-					err := rows.Scan(&id, &name, &channel, &format, &status, &productsCount, &lastGenerated, &createdAt, &updatedAt, &settings)
+					err := rows.Scan(&id, &name, &channel, &format, &status, &productsCount, &lastGenerated, &createdAt, &updatedAt, &settings, &connectorName, &connectorType)
 					if err != nil {
 						log.Printf("Error scanning feed row: %v", err)
 						continue
@@ -4696,6 +4699,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"createdAt":     createdAt,
 						"updatedAt":     updatedAt,
 						"settings":      settings.String,
+						"connectorName": connectorName,
+						"connectorType": connectorType,
 					})
 				}
 
@@ -4732,24 +4737,40 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				name, _ := req["name"].(string)
 				channel, _ := req["channel"].(string)
 				format, _ := req["format"].(string)
+				connectorID, _ := req["connector_id"].(string)
 				settings := "{}"
 				if s, ok := req["settings"].(string); ok {
 					settings = s
 				}
 
-				if name == "" || channel == "" || format == "" {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Name, channel, and format are required"})
+				if name == "" || channel == "" || format == "" || connectorID == "" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Name, channel, format, and connector_id are required"})
+					return
+				}
+
+				// Validate that connector exists and belongs to the organization
+				organizationID := getOrCreateOrganizationID()
+				var connectorExists bool
+				err := db.QueryRow(`
+					SELECT EXISTS(
+						SELECT 1 FROM connectors 
+						WHERE id = $1 AND organization_id = $2
+					)
+				`, connectorID, organizationID).Scan(&connectorExists)
+
+				if err != nil || !connectorExists {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid connector_id or connector not found"})
 					return
 				}
 
 				var feedID string
-				err := db.QueryRow(`
+				err = db.QueryRow(`
 					INSERT INTO product_feeds (
 						organization_id, name, channel, format, status, 
-						products_count, settings, created_at, updated_at
-					) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+						products_count, settings, connector_id, created_at, updated_at
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
 					RETURNING id
-				`, getOrCreateOrganizationID(), name, channel, format, "inactive", 0, settings).Scan(&feedID)
+				`, organizationID, name, channel, format, "inactive", 0, settings, connectorID).Scan(&feedID)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create feed"})
@@ -4903,13 +4924,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				organizationID := getOrCreateOrganizationID()
 
 				// Get feed details including settings
-				var name, channel, format, status string
+				var name, channel, format, status, connectorID string
 				var settings sql.NullString
 				err := db.QueryRow(`
-					SELECT name, channel, format, status, settings
+					SELECT name, channel, format, status, settings, COALESCE(connector_id, '') as connector_id
 					FROM product_feeds 
 					WHERE id = $1 AND organization_id = $2
-				`, feedID, organizationID).Scan(&name, &channel, &format, &status, &settings)
+				`, feedID, organizationID).Scan(&name, &channel, &format, &status, &settings, &connectorID)
 
 				if err != nil {
 					log.Printf("Feed not found: %v", err)
@@ -4943,16 +4964,32 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					// Build filter WHERE clause from feed settings
 					whereClause, filterArgs := buildFeedFilters(settings.String)
 
+					// Add connector_id filter if specified
+					connectorFilter := ""
+					connectorArgs := []interface{}{}
+					if connectorID != "" {
+						connectorFilter = "AND connector_id = $1"
+						connectorArgs = []interface{}{connectorID}
+						// Adjust all existing filter args by adding 1 to their position
+						for i := range filterArgs {
+							filterArgs[i] = fmt.Sprintf("$%d", i+2)
+						}
+					}
+
 					// Fetch products from database with filters applied
 					query := fmt.Sprintf(`
 						SELECT id, external_id, title, description, price, currency, sku, 
 						       brand, category, images, status, metadata
 						FROM products 
-						WHERE %s
+						WHERE organization_id = $1 %s %s
 						ORDER BY created_at DESC
-					`, whereClause)
+					`, connectorFilter, whereClause)
 
-					rows, err := db.Query(query, filterArgs...)
+					// Combine args: organization_id first, then connector_id (if exists), then filter args
+					allArgs := append([]interface{}{organizationID}, connectorArgs...)
+					allArgs = append(allArgs, filterArgs...)
+
+					rows, err := db.Query(query, allArgs...)
 					if err != nil {
 						log.Printf("Failed to fetch products: %v", err)
 						errorMsg := fmt.Sprintf("Failed to fetch products: %v", err)
