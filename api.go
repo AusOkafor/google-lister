@@ -5003,7 +5003,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					connectorFilter := ""
 					connectorArgs := []interface{}{}
 					if connectorID != "" {
-						connectorFilter = " AND connector_id = $1::uuid"
+						connectorFilter = " AND connector_id = $1"
 						connectorArgs = []interface{}{connectorID}
 						// Adjust all existing filter args by adding 1 to their position
 						for i := range filterArgs {
