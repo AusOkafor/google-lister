@@ -4979,7 +4979,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					connectorFilter := ""
 					connectorArgs := []interface{}{}
 					if connectorID != "" {
-						connectorFilter = "AND connector_id = $1"
+						connectorFilter = " AND connector_id = $1"
 						connectorArgs = []interface{}{connectorID}
 						// Adjust all existing filter args by adding 1 to their position
 						for i := range filterArgs {
@@ -4987,12 +4987,17 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 
+					// Add AND before whereClause if it exists
+					if whereClause != "" {
+						whereClause = " AND " + whereClause
+					}
+
 					// Fetch products from database with filters applied
 					query := fmt.Sprintf(`
 						SELECT id, external_id, title, description, price, currency, sku, 
 						       brand, category, images, status, metadata
 						FROM products 
-						WHERE organization_id = $1 %s %s
+						WHERE organization_id = $1%s%s
 						ORDER BY created_at DESC
 					`, connectorFilter, whereClause)
 
