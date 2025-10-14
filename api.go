@@ -6461,11 +6461,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			feeds.GET("/:id/preview", func(c *gin.Context) {
 				feedID := c.Param("id")
 				organizationID := getOrCreateOrganizationID()
-				limit := c.DefaultQuery("limit", "10")
+				limit := c.DefaultQuery("limit", "100")
 
 				limitInt, _ := strconv.Atoi(limit)
-				if limitInt > 100 {
-					limitInt = 100
+				if limitInt > 5000 {
+					limitInt = 5000
 				}
 
 				// Get feed details including settings
@@ -6560,13 +6560,17 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					previewContent = generateGoogleShoppingXML(products)
 				}
 
+				// Generate validation results
+				validationResults := validateFeedData(products, format, channel)
+
 				c.JSON(http.StatusOK, gin.H{
 					"data": gin.H{
-						"channel":        channel,
-						"format":         format,
-						"previewContent": previewContent,
-						"productsCount":  len(products),
-						"sampleProducts": products,
+						"channel":           channel,
+						"format":            format,
+						"previewContent":    previewContent,
+						"productsCount":     len(products),
+						"sampleProducts":    products,
+						"validationResults": validationResults,
 					},
 				})
 			})
@@ -9326,6 +9330,125 @@ func generateFacebookCSV(products []map[string]interface{}) string {
 	}
 
 	return csv.String()
+}
+
+// validateFeedData validates feed data and returns validation results
+func validateFeedData(products []map[string]interface{}, format, channel string) []map[string]interface{} {
+	var results []map[string]interface{}
+
+	totalProducts := len(products)
+	errors := 0
+	warnings := 0
+
+	// Track specific validation issues
+	missingGTIN := 0
+	missingImages := 0
+	longTitles := 0
+	invalidPrices := 0
+	missingBrands := 0
+	missingCategories := 0
+
+	for _, product := range products {
+		// Check for missing GTIN
+		if gtin, ok := product["gtin"].(string); !ok || gtin == "" {
+			missingGTIN++
+		}
+
+		// Check for missing images
+		if images, ok := product["images"].(string); !ok || images == "" || images == "[]" {
+			missingImages++
+		}
+
+		// Check for long titles (>150 chars)
+		if title, ok := product["title"].(string); ok && len(title) > 150 {
+			longTitles++
+		}
+
+		// Check for invalid prices
+		if price, ok := product["price"].(float64); !ok || price <= 0 {
+			invalidPrices++
+		}
+
+		// Check for missing brands
+		if brand, ok := product["brand"].(string); !ok || brand == "" {
+			missingBrands++
+		}
+
+		// Check for missing categories
+		if category, ok := product["category"].(string); !ok || category == "" {
+			missingCategories++
+		}
+	}
+
+	// Add validation results
+	if missingGTIN > 0 {
+		results = append(results, map[string]interface{}{
+			"type":     "error",
+			"message":  "Missing required field: GTIN",
+			"count":    missingGTIN,
+			"severity": "high",
+		})
+		errors += missingGTIN
+	}
+
+	if invalidPrices > 0 {
+		results = append(results, map[string]interface{}{
+			"type":     "error",
+			"message":  "Invalid price format or missing price",
+			"count":    invalidPrices,
+			"severity": "high",
+		})
+		errors += invalidPrices
+	}
+
+	if missingImages > 0 {
+		results = append(results, map[string]interface{}{
+			"type":     "warning",
+			"message":  "Missing product images",
+			"count":    missingImages,
+			"severity": "medium",
+		})
+		warnings += missingImages
+	}
+
+	if longTitles > 0 {
+		results = append(results, map[string]interface{}{
+			"type":     "warning",
+			"message":  "Title too long (>150 chars)",
+			"count":    longTitles,
+			"severity": "medium",
+		})
+		warnings += longTitles
+	}
+
+	if missingBrands > 0 {
+		results = append(results, map[string]interface{}{
+			"type":     "warning",
+			"message":  "Missing brand information",
+			"count":    missingBrands,
+			"severity": "medium",
+		})
+		warnings += missingBrands
+	}
+
+	if missingCategories > 0 {
+		results = append(results, map[string]interface{}{
+			"type":     "info",
+			"message":  "Missing category information",
+			"count":    missingCategories,
+			"severity": "low",
+		})
+	}
+
+	// Add summary info
+	results = append(results, map[string]interface{}{
+		"type":     "info",
+		"message":  "Products with complete data",
+		"count":    totalProducts - errors,
+		"severity": "low",
+	})
+
+	return results
 }
 
 // generateInstagramJSON generates Instagram Shopping JSON feed
