@@ -1189,6 +1189,22 @@ func initDB() error {
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 			UNIQUE(connector_id, inventory_item_id, location_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS notifications (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000000'::uuid,
+			type VARCHAR(50) NOT NULL CHECK (type IN ('feed_generated', 'feed_failed', 'feed_scheduled', 'system_alert', 'info')),
+			title VARCHAR(255) NOT NULL,
+			message TEXT NOT NULL,
+			is_read BOOLEAN DEFAULT FALSE,
+			priority VARCHAR(20) DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+			entity_type VARCHAR(50),
+			entity_id UUID,
+			entity_name VARCHAR(255),
+			metadata JSONB DEFAULT '{}',
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			read_at TIMESTAMP WITH TIME ZONE,
+			expires_at TIMESTAMP WITH TIME ZONE
+		);`,
 	}
 
 	// Execute all table creation statements
@@ -5004,12 +5020,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					connectorArgs := []interface{}{}
 					if connectorID != "" {
 						// Cast both sides to text to handle potential UUID/VARCHAR mismatch
-						connectorFilter = " AND connector_id::text = $1::text"
+						// connector_id should be $2 since organization_id is $1
+						connectorFilter = " AND connector_id::text = $2::text"
 						connectorArgs = []interface{}{connectorID}
 						log.Printf("🔍 Filtering by connector_id: %s (type: %T)", connectorID, connectorID)
-						// Adjust all existing filter args by adding 1 to their position
+						// Adjust all existing filter args by adding 2 to their position (org_id=1, connector_id=2)
 						for i := range filterArgs {
-							filterArgs[i] = fmt.Sprintf("$%d", i+2)
+							filterArgs[i] = fmt.Sprintf("$%d", i+3)
 						}
 					} else {
 						log.Printf("⚠️ No connector_id specified, will fetch all products")
