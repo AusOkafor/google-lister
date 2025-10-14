@@ -4642,7 +4642,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				limitInt, _ := strconv.Atoi(limit)
 				offset := (pageInt - 1) * limitInt
 
-				// Build query
+				// Build query with fallback for missing connector_id column
 				query := `
 					SELECT 
 						pf.id, pf.name, pf.channel, pf.format, pf.status, pf.products_count, 
@@ -4664,6 +4664,30 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				args = append(args, limitInt, offset)
 
 				rows, err := db.Query(query, args...)
+
+				// If connector_id column doesn't exist, use fallback query
+				if err != nil && strings.Contains(err.Error(), "column") && strings.Contains(err.Error(), "connector_id") {
+					query = `
+						SELECT 
+							pf.id, pf.name, pf.channel, pf.format, pf.status, pf.products_count, 
+							pf.last_generated, pf.created_at, pf.updated_at, pf.settings,
+							'No Store' as connector_name,
+							'' as connector_type
+						FROM product_feeds pf
+						WHERE pf.organization_id = $1
+					`
+					args = []interface{}{getOrCreateOrganizationID()}
+
+					if status != "" {
+						query += " AND status = $" + strconv.Itoa(len(args)+1)
+						args = append(args, status)
+					}
+
+					query += " ORDER BY created_at DESC LIMIT $" + strconv.Itoa(len(args)+1) + " OFFSET $" + strconv.Itoa(len(args)+2)
+					args = append(args, limitInt, offset)
+
+					rows, err = db.Query(query, args...)
+				}
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch feeds"})
 					return
