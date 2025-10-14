@@ -4932,6 +4932,17 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					WHERE id = $1 AND organization_id = $2
 				`, feedID, organizationID).Scan(&name, &channel, &format, &status, &settings, &connectorID)
 
+				// If connector_id column doesn't exist, set it to empty string
+				if err != nil && strings.Contains(err.Error(), "column") && strings.Contains(err.Error(), "connector_id") {
+					// Fallback query without connector_id
+					err = db.QueryRow(`
+					SELECT name, channel, format, status, settings
+					FROM product_feeds 
+					WHERE id = $1 AND organization_id = $2
+				`, feedID, organizationID).Scan(&name, &channel, &format, &status, &settings)
+					connectorID = "" // Set to empty for feeds without connector_id
+				}
+
 				if err != nil {
 					log.Printf("Feed not found: %v", err)
 					c.JSON(http.StatusNotFound, gin.H{"error": "Feed not found"})
@@ -7862,9 +7873,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				if err == nil {
 					// Product exists, update it
 					_, err = db.Exec(`
-						UPDATE products SET 
-							title = $1, description = $2, price = $3, currency = $4,
-							sku = $5, brand = $6, category = $7, images = $8,
+								UPDATE products SET 
+									title = $1, description = $2, price = $3, currency = $4, 
+									sku = $5, brand = $6, category = $7, images = $8, 
 							variants = $9, metadata = $10, status = $11, organization_id = $12, updated_at = NOW()
 						WHERE connector_id = $13 AND external_id = $14
 					`, transformedProduct.Title, transformedProduct.Description,
@@ -7883,7 +7894,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					_, err = db.Exec(`
 						INSERT INTO products (connector_id, external_id, title, description, price, currency, sku, brand, category, images, variants, metadata, status, organization_id, created_at, updated_at)
 						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
-					`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
+							`, connectorID, transformedProduct.ExternalID, transformedProduct.Title, transformedProduct.Description,
 						transformedProduct.Price, transformedProduct.Currency, transformedProduct.SKU,
 						transformedProduct.Brand, transformedProduct.Category, imageURLsArray,
 						transformedProduct.Variants, string(enhancedMetadataJSON), "ACTIVE", globalOrganizationID)
