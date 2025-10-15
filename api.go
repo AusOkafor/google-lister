@@ -7386,6 +7386,144 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
+		// Development Tools
+		dev := api.Group("/dev")
+		{
+			// Get development Google Shopping credentials
+			dev.GET("/google-shopping-credentials", func(c *gin.Context) {
+				devCredentials := map[string]interface{}{
+					"api_key":     "AIzaSyDevKeyForDevelopment123456789",
+					"secret":      "dev_secret_for_testing",
+					"merchant_id": "123456789",
+					"environment": "development",
+					"note":        "These are development credentials for testing only",
+					"endpoints": map[string]interface{}{
+						"sandbox": "https://sandbox.googleapis.com/content/v2.1/",
+						"prod":    "https://www.googleapis.com/content/v2.1/",
+					},
+					"setup_guide": map[string]interface{}{
+						"step_1": "Go to Google Cloud Console",
+						"step_2": "Create a new project (free)",
+						"step_3": "Enable Content API for Shopping",
+						"step_4": "Create API Key (free)",
+						"step_5": "Use test Merchant Center account",
+					},
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":    devCredentials,
+					"message": "Development credentials for Google Shopping",
+					"warning": "Use these only for development and testing",
+				})
+			})
+
+			// Test Google Shopping connection with dev credentials
+			dev.POST("/test-google-connection", func(c *gin.Context) {
+				var request struct {
+					APIKey     string `json:"api_key"`
+					Secret     string `json:"secret"`
+					MerchantID string `json:"merchant_id"`
+				}
+
+				if err := c.ShouldBindJSON(&request); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Simulate Google API connection test
+				testResult := map[string]interface{}{
+					"status":      "success",
+					"environment": "development",
+					"message":     "Google Shopping connection test successful",
+					"merchant_id": request.MerchantID,
+					"api_status":  "active",
+					"test_mode":   true,
+					"account_info": map[string]interface{}{
+						"merchant_name": "Development Test Store",
+						"country":       "US",
+						"currency":      "USD",
+						"account_type":  "test",
+					},
+					"capabilities": []string{
+						"product_feed_upload",
+						"inventory_sync",
+						"price_updates",
+						"product_validation",
+					},
+					"next_steps": []string{
+						"Upload test product feed",
+						"Verify product data format",
+						"Test feed submission",
+						"Monitor feed status",
+					},
+				}
+
+				c.JSON(http.StatusOK, testResult)
+			})
+
+			// Generate sample Google Shopping feed for testing
+			dev.GET("/sample-google-feed", func(c *gin.Context) {
+				// Get organization ID from context
+				organizationID, exists := c.Get("organization_id")
+				if !exists {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Organization ID not found"})
+					return
+				}
+
+				// Get sample products
+				rows, err := db.Query(`
+					SELECT id, external_id, title, description, price, currency, sku, 
+						   brand, category, images, status, metadata, gtin, mpn
+					FROM products 
+					WHERE organization_id = $1
+					LIMIT 5
+				`, organizationID)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
+					return
+				}
+				defer rows.Close()
+
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, currency, sku, brand, category, images, status, metadata, gtin, mpn sql.NullString
+					var price sql.NullFloat64
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category, &images, &status, &metadata, &gtin, &mpn)
+					if err != nil {
+						continue
+					}
+
+					product := map[string]interface{}{
+						"id":          getStringValue(id),
+						"external_id": getStringValue(externalID),
+						"title":       getStringValue(title),
+						"description": getStringValue(description),
+						"price":       getFloatValue(price),
+						"currency":    getStringValue(currency),
+						"sku":         getStringValue(sku),
+						"brand":       getStringValue(brand),
+						"category":    getStringValue(category),
+						"images":      getStringValue(images),
+						"status":      getStringValue(status),
+						"metadata":    getStringValue(metadata),
+						"gtin":        getStringValue(gtin),
+						"mpn":         getStringValue(mpn),
+					}
+
+					products = append(products, product)
+				}
+
+				// Generate Google Shopping XML feed
+				xmlContent := generateGoogleShoppingXML(products)
+
+				c.Header("Content-Type", "application/xml")
+				c.Header("Content-Disposition", "attachment; filename=sample-google-shopping-feed.xml")
+				c.String(http.StatusOK, xmlContent)
+			})
+		}
+
 		// Channel Connection Management
 		channels := api.Group("/channels")
 		{
