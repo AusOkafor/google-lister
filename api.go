@@ -7092,7 +7092,6 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Export Preview for Channel
 			exports.GET("/preview/:channel", func(c *gin.Context) {
 				channel := c.Param("channel")
-				format := c.DefaultQuery("format", "xml")
 				limitStr := c.DefaultQuery("limit", "10")
 				connectorID := c.Query("connector_id")
 
@@ -7188,11 +7187,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					previewContent = generateFacebookCSV(products)
 					previewFormat = "csv"
 				case "amazon":
-					previewContent = generateAmazonXML(products)
+					previewContent = generateGoogleShoppingXML(products) // Use Google Shopping format for Amazon
 					previewFormat = "xml"
 				default:
-					previewContent = generateStandardJSON(products)
-					previewFormat = "json"
+					previewContent = generateXMLExport(products)
+					previewFormat = "xml"
 				}
 
 				// Validate the preview data
@@ -7248,7 +7247,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"products_count": 150,
 						"file_size":      "1.8 MB",
 						"format":         "csv",
-						"created_at":     time.Now().Add(-1 * time.Day),
+						"created_at":     time.Now().Add(-24 * time.Hour),
 						"duration":       "32 seconds",
 					},
 					{
@@ -7258,7 +7257,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"products_count": 0,
 						"file_size":      "0 MB",
 						"format":         "xml",
-						"created_at":     time.Now().Add(-3 * time.Day),
+						"created_at":     time.Now().Add(-72 * time.Hour),
 						"duration":       "0 seconds",
 						"error":          "Authentication failed",
 					},
