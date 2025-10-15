@@ -7088,6 +7088,303 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					"note":    "Export tracking will be implemented with database logging",
 				})
 			})
+
+			// Export Preview for Channel
+			exports.GET("/preview/:channel", func(c *gin.Context) {
+				channel := c.Param("channel")
+				format := c.DefaultQuery("format", "xml")
+				limitStr := c.DefaultQuery("limit", "10")
+				connectorID := c.Query("connector_id")
+
+				limit, err := strconv.Atoi(limitStr)
+				if err != nil || limit <= 0 {
+					limit = 10
+				}
+				if limit > 1000 {
+					limit = 1000
+				}
+
+				// Get organization ID from context
+				organizationID, exists := c.Get("organization_id")
+				if !exists {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Organization ID not found"})
+					return
+				}
+
+				// Build query with filters
+				whereClause := ""
+				filterArgs := []interface{}{}
+
+				// Add connector filter if specified
+				if connectorID != "" {
+					whereClause = " AND connector_id::text = $2::text"
+					filterArgs = append(filterArgs, connectorID)
+				}
+
+				// Add status filter
+				whereClause += " AND status NOT IN ('OUT_OF_STOCK', 'ARCHIVED', 'DRAFT')"
+
+				// Get sample products
+				query := fmt.Sprintf(`
+					SELECT id, external_id, title, description, price, currency, sku, 
+						   brand, category, images, status, metadata, gtin, mpn
+					FROM products 
+					WHERE organization_id = $1%s
+					ORDER BY created_at DESC 
+					LIMIT $%d
+				`, whereClause, len(filterArgs)+2)
+
+				allArgs := append([]interface{}{organizationID}, filterArgs...)
+				allArgs = append(allArgs, limit)
+
+				rows, err := db.Query(query, allArgs...)
+				if err != nil {
+					log.Printf("Error fetching products for export preview: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
+					return
+				}
+				defer rows.Close()
+
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, currency, sku, brand, category, images, status, metadata, gtin, mpn sql.NullString
+					var price sql.NullFloat64
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category, &images, &status, &metadata, &gtin, &mpn)
+					if err != nil {
+						log.Printf("Error scanning product: %v", err)
+						continue
+					}
+
+					product := map[string]interface{}{
+						"id":          getStringValue(id),
+						"external_id": getStringValue(externalID),
+						"title":       getStringValue(title),
+						"description": getStringValue(description),
+						"price":       getFloatValue(price),
+						"currency":    getStringValue(currency),
+						"sku":         getStringValue(sku),
+						"brand":       getStringValue(brand),
+						"category":    getStringValue(category),
+						"images":      getStringValue(images),
+						"status":      getStringValue(status),
+						"metadata":    getStringValue(metadata),
+						"gtin":        getStringValue(gtin),
+						"mpn":         getStringValue(mpn),
+					}
+
+					products = append(products, product)
+				}
+
+				// Generate preview content based on channel and format
+				var previewContent string
+				var previewFormat string
+
+				switch channel {
+				case "google":
+					previewContent = generateGoogleShoppingXML(products)
+					previewFormat = "xml"
+				case "facebook", "instagram":
+					previewContent = generateFacebookCSV(products)
+					previewFormat = "csv"
+				case "amazon":
+					previewContent = generateAmazonXML(products)
+					previewFormat = "xml"
+				default:
+					previewContent = generateStandardJSON(products)
+					previewFormat = "json"
+				}
+
+				// Validate the preview data
+				validationResults := validateFeedData(products, previewFormat, channel)
+
+				c.JSON(http.StatusOK, gin.H{
+					"channel":            channel,
+					"format":             previewFormat,
+					"preview_content":    previewContent,
+					"products_count":     len(products),
+					"validation_results": validationResults,
+					"generated_at":       time.Now(),
+				})
+			})
+
+			// Export History for Channel
+			exports.GET("/history/:channel", func(c *gin.Context) {
+				channel := c.Param("channel")
+				pageStr := c.DefaultQuery("page", "1")
+				limitStr := c.DefaultQuery("limit", "20")
+
+				page, err := strconv.Atoi(pageStr)
+				if err != nil || page < 1 {
+					page = 1
+				}
+
+				limit, err := strconv.Atoi(limitStr)
+				if err != nil || limit <= 0 {
+					limit = 20
+				}
+				if limit > 100 {
+					limit = 100
+				}
+
+				offset := (page - 1) * limit
+
+				// Mock export history data (would come from export_logs table in production)
+				history := []map[string]interface{}{
+					{
+						"id":             "exp_001",
+						"channel":        channel,
+						"status":         "completed",
+						"products_count": 150,
+						"file_size":      "2.4 MB",
+						"format":         "xml",
+						"created_at":     time.Now().Add(-2 * time.Hour),
+						"duration":       "45 seconds",
+					},
+					{
+						"id":             "exp_002",
+						"channel":        channel,
+						"status":         "completed",
+						"products_count": 150,
+						"file_size":      "1.8 MB",
+						"format":         "csv",
+						"created_at":     time.Now().Add(-1 * time.Day),
+						"duration":       "32 seconds",
+					},
+					{
+						"id":             "exp_003",
+						"channel":        channel,
+						"status":         "failed",
+						"products_count": 0,
+						"file_size":      "0 MB",
+						"format":         "xml",
+						"created_at":     time.Now().Add(-3 * time.Day),
+						"duration":       "0 seconds",
+						"error":          "Authentication failed",
+					},
+				}
+
+				// Paginate results
+				start := offset
+				end := offset + limit
+				if start >= len(history) {
+					history = []map[string]interface{}{}
+				} else {
+					if end > len(history) {
+						end = len(history)
+					}
+					history = history[start:end]
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data": history,
+					"pagination": gin.H{
+						"page":        page,
+						"limit":       limit,
+						"total":       len(history),
+						"total_pages": (len(history) + limit - 1) / limit,
+					},
+					"message": "Export history retrieved successfully",
+				})
+			})
+
+			// Export Validation for Channel
+			exports.GET("/validation/:channel", func(c *gin.Context) {
+				channel := c.Param("channel")
+				connectorID := c.Query("connector_id")
+
+				// Get organization ID from context
+				organizationID, exists := c.Get("organization_id")
+				if !exists {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Organization ID not found"})
+					return
+				}
+
+				// Build query with filters
+				whereClause := ""
+				filterArgs := []interface{}{}
+
+				// Add connector filter if specified
+				if connectorID != "" {
+					whereClause = " AND connector_id::text = $2::text"
+					filterArgs = append(filterArgs, connectorID)
+				}
+
+				// Add status filter
+				whereClause += " AND status NOT IN ('OUT_OF_STOCK', 'ARCHIVED', 'DRAFT')"
+
+				// Get all products for validation
+				query := fmt.Sprintf(`
+					SELECT id, external_id, title, description, price, currency, sku, 
+						   brand, category, images, status, metadata, gtin, mpn
+					FROM products 
+					WHERE organization_id = $1%s
+					ORDER BY created_at DESC
+				`, whereClause)
+
+				allArgs := append([]interface{}{organizationID}, filterArgs...)
+
+				rows, err := db.Query(query, allArgs...)
+				if err != nil {
+					log.Printf("Error fetching products for export validation: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
+					return
+				}
+				defer rows.Close()
+
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, currency, sku, brand, category, images, status, metadata, gtin, mpn sql.NullString
+					var price sql.NullFloat64
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category, &images, &status, &metadata, &gtin, &mpn)
+					if err != nil {
+						log.Printf("Error scanning product: %v", err)
+						continue
+					}
+
+					product := map[string]interface{}{
+						"id":          getStringValue(id),
+						"external_id": getStringValue(externalID),
+						"title":       getStringValue(title),
+						"description": getStringValue(description),
+						"price":       getFloatValue(price),
+						"currency":    getStringValue(currency),
+						"sku":         getStringValue(sku),
+						"brand":       getStringValue(brand),
+						"category":    getStringValue(category),
+						"images":      getStringValue(images),
+						"status":      getStringValue(status),
+						"metadata":    getStringValue(metadata),
+						"gtin":        getStringValue(gtin),
+						"mpn":         getStringValue(mpn),
+					}
+
+					products = append(products, product)
+				}
+
+				// Determine format based on channel
+				var format string
+				switch channel {
+				case "google", "amazon":
+					format = "xml"
+				case "facebook", "instagram":
+					format = "csv"
+				default:
+					format = "json"
+				}
+
+				// Validate the products
+				validationResults := validateFeedData(products, format, channel)
+
+				c.JSON(http.StatusOK, gin.H{
+					"channel":            channel,
+					"format":             format,
+					"total_products":     len(products),
+					"validation_results": validationResults,
+					"validated_at":       time.Now(),
+				})
+			})
 		}
 
 		// AI-Powered Product Transformation
