@@ -9254,12 +9254,20 @@ func generateGoogleShoppingXML(products []map[string]interface{}) string {
 			xml.WriteString(fmt.Sprintf("      <g:brand><![CDATA[%v]]></g:brand>\n", brand))
 		}
 
-		if gtin := getProductField(product, "gtin"); gtin != "" {
+		// Handle GTIN and MPN - use SKU as MPN when GTIN is missing
+		gtin := getProductField(product, "gtin")
+		mpn := getProductField(product, "mpn")
+		sku := getProductField(product, "sku")
+
+		if gtin != "" {
 			xml.WriteString(fmt.Sprintf("      <g:gtin><![CDATA[%v]]></g:gtin>\n", gtin))
 		}
 
-		if mpn := getProductField(product, "mpn"); mpn != "" {
+		// Use MPN if available, otherwise use SKU as MPN
+		if mpn != "" {
 			xml.WriteString(fmt.Sprintf("      <g:mpn><![CDATA[%v]]></g:mpn>\n", mpn))
+		} else if sku != "" {
+			xml.WriteString(fmt.Sprintf("      <g:mpn><![CDATA[%v]]></g:mpn>\n", sku))
 		}
 
 		if category := getProductField(product, "category"); category != "" {
@@ -9345,12 +9353,16 @@ func validateFeedData(products []map[string]interface{}, format, channel string)
 	missingImages := 0
 	longTitles := 0
 	invalidPrices := 0
+	zeroPrices := 0
 	missingBrands := 0
 	missingCategories := 0
 
 	for _, product := range products {
-		// Check for missing GTIN
-		if gtin, ok := product["gtin"].(string); !ok || gtin == "" {
+		// Check for missing GTIN - but if SKU exists, we can use it as MPN
+		gtin, hasGTIN := product["gtin"].(string)
+		sku, hasSKU := product["sku"].(string)
+
+		if (!hasGTIN || gtin == "") && (!hasSKU || sku == "") {
 			missingGTIN++
 		}
 
@@ -9367,6 +9379,9 @@ func validateFeedData(products []map[string]interface{}, format, channel string)
 		// Check for invalid prices
 		if price, ok := product["price"].(float64); !ok || price <= 0 {
 			invalidPrices++
+			if price == 0 {
+				zeroPrices++
+			}
 		}
 
 		// Check for missing brands
@@ -9384,7 +9399,7 @@ func validateFeedData(products []map[string]interface{}, format, channel string)
 	if missingGTIN > 0 {
 		results = append(results, map[string]interface{}{
 			"type":     "error",
-			"message":  "Missing required field: GTIN",
+			"message":  "Missing required field: GTIN or SKU (required for Google Shopping)",
 			"count":    missingGTIN,
 			"severity": "high",
 		})
@@ -9392,9 +9407,13 @@ func validateFeedData(products []map[string]interface{}, format, channel string)
 	}
 
 	if invalidPrices > 0 {
+		message := "Invalid or missing prices"
+		if zeroPrices > 0 {
+			message = fmt.Sprintf("Invalid or missing prices (%d with $0 price)", zeroPrices)
+		}
 		results = append(results, map[string]interface{}{
 			"type":     "error",
-			"message":  "Invalid price format or missing price",
+			"message":  message,
 			"count":    invalidPrices,
 			"severity": "high",
 		})
