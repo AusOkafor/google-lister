@@ -1093,6 +1093,14 @@ func initDB() error {
 
 	// Create all required tables
 	tables := []string{
+		// Add connector_id column to existing product_feeds table if it doesn't exist
+		`DO $$ 
+		BEGIN
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'product_feeds' AND column_name = 'connector_id') THEN
+				ALTER TABLE product_feeds ADD COLUMN connector_id VARCHAR(255);
+				CREATE INDEX IF NOT EXISTS idx_product_feeds_connector_id ON product_feeds(connector_id);
+			END IF;
+		END $$;`,
 		`CREATE TABLE IF NOT EXISTS connectors (
 			id VARCHAR(255) PRIMARY KEY,
 			name VARCHAR(255) NOT NULL,
@@ -6468,14 +6476,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					limitInt = 5000
 				}
 
-				// Get feed details including settings
+				// Get feed details including settings and connector_id
 				var channel, format string
 				var settings sql.NullString
+				var connectorID sql.NullString
 				err := db.QueryRow(`
-					SELECT channel, format, settings
+					SELECT channel, format, settings, COALESCE(connector_id, '') as connector_id
 					FROM product_feeds 
 					WHERE id = $1 AND organization_id = $2
-				`, feedID, organizationID).Scan(&channel, &format, &settings)
+				`, feedID, organizationID).Scan(&channel, &format, &settings, &connectorID)
 
 				if err != nil {
 					log.Printf("Feed not found for preview: %v", err)
@@ -6486,18 +6495,38 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Build filter WHERE clause from feed settings
 				whereClause, filterArgs := buildFeedFilters(settings.String)
 
+				// Add connector filter if specified
+				connectorFilter := ""
+				connectorArgs := []interface{}{}
+				if connectorID.String != "" {
+					connectorFilter = " AND connector_id::text = $2::text"
+					connectorArgs = []interface{}{connectorID.String}
+					// Adjust all existing filter args by adding 2 to their position (org_id=1, connector_id=2)
+					for i := range filterArgs {
+						filterArgs[i] = fmt.Sprintf("$%d", i+3)
+					}
+				}
+
+				// Add AND before whereClause if it exists
+				if whereClause != "" {
+					whereClause = " AND " + whereClause
+				}
+
 				// Get sample products with filters applied
 				query := fmt.Sprintf(`
 					SELECT id, external_id, title, description, price, currency, sku, 
 					       brand, category, images, status, metadata
 					FROM products 
-					WHERE %s
+					WHERE organization_id = $1%s%s
 					ORDER BY created_at DESC 
 					LIMIT $%d
-				`, whereClause, len(filterArgs)+1)
+				`, connectorFilter, whereClause, len(filterArgs)+len(connectorArgs)+2)
 
-				filterArgs = append(filterArgs, limitInt)
-				rows, err := db.Query(query, filterArgs...)
+				// Combine args: organization_id first, then connector_id (if exists), then filter args, then limit
+				allArgs := append([]interface{}{organizationID}, connectorArgs...)
+				allArgs = append(allArgs, filterArgs...)
+				allArgs = append(allArgs, limitInt)
+				rows, err := db.Query(query, allArgs...)
 
 				if err != nil {
 					log.Printf("Failed to fetch products for preview: %v", err)
