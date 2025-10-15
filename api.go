@@ -6471,10 +6471,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Check if we should use mock data (default for development)
 				useMock := os.Getenv("GTIN_LOOKUP_MODE") != "production"
-				
+
 				var result map[string]interface{}
 				var note string
-				
+
 				if useMock {
 					result = mockGTINLookup(gtin)
 					note = "Development mode - using mock data"
@@ -9433,34 +9433,34 @@ func mockGTINLookup(gtin string) map[string]interface{} {
 	// Simulate GTIN lookup with comprehensive mock data
 	mockDatabase := map[string]map[string]interface{}{
 		"123456789012": {
-			"brand":      "Sample Brand",
-			"title":      "Sample Product",
-			"category":   "Electronics",
-			"found":      true,
-			"mpn":        "SMP-001",
+			"brand":       "Sample Brand",
+			"title":       "Sample Product",
+			"category":    "Electronics",
+			"found":       true,
+			"mpn":         "SMP-001",
 			"description": "High-quality electronic device for testing",
-			"price":      "99.99",
-			"currency":   "USD",
+			"price":       "99.99",
+			"currency":    "USD",
 		},
 		"987654321098": {
-			"brand":      "Test Brand",
-			"title":      "Test Product",
-			"category":   "Clothing",
-			"found":      true,
-			"mpn":        "TST-002",
+			"brand":       "Test Brand",
+			"title":       "Test Product",
+			"category":    "Clothing",
+			"found":       true,
+			"mpn":         "TST-002",
 			"description": "Premium clothing item for testing",
-			"price":      "49.99",
-			"currency":   "USD",
+			"price":       "49.99",
+			"currency":    "USD",
 		},
 		"111111111111": {
-			"brand":      "Demo Brand",
-			"title":      "Demo Product",
-			"category":   "Home & Garden",
-			"found":      true,
-			"mpn":        "DEM-003",
+			"brand":       "Demo Brand",
+			"title":       "Demo Product",
+			"category":    "Home & Garden",
+			"found":       true,
+			"mpn":         "DEM-003",
 			"description": "Demonstration product for testing",
-			"price":      "29.99",
-			"currency":   "USD",
+			"price":       "29.99",
+			"currency":    "USD",
 		},
 	}
 
@@ -9473,10 +9473,10 @@ func mockGTINLookup(gtin string) map[string]interface{} {
 	gtinHash := fmt.Sprintf("%x", gtin)
 	brands := []string{"Mock Brand", "Development Corp", "Test Industries", "Demo Products"}
 	categories := []string{"General", "Electronics", "Clothing", "Home & Garden", "Sports", "Books"}
-	
+
 	brandIndex := len(gtin) % len(brands)
 	categoryIndex := len(gtin) % len(categories)
-	
+
 	return map[string]interface{}{
 		"brand":       brands[brandIndex],
 		"title":       fmt.Sprintf("Mock Product %s", gtinHash[:6]),
@@ -9507,17 +9507,14 @@ func generateMockGTIN(product map[string]interface{}) string {
 		hash = hash + strings.Repeat("0", 12-len(hash))
 	}
 
-	// Take first 12 characters and ensure they're numeric
-	gtin := hash[:12]
-	
 	// Convert to a valid GTIN format (ensure it starts with a valid prefix)
 	// Use common manufacturer codes for mock data
 	prefixes := []string{"123", "456", "789", "012", "345"}
 	prefix := prefixes[len(hash)%len(prefixes)]
-	
+
 	// Generate remaining digits
 	remaining := fmt.Sprintf("%09d", len(hash)%1000000000)
-	
+
 	return prefix + remaining
 }
 
