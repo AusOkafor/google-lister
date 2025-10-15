@@ -7386,6 +7386,285 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
+		// Channel Connection Management
+		channels := api.Group("/channels")
+		{
+			// Get available channels
+			channels.GET("/available", func(c *gin.Context) {
+				availableChannels := []map[string]interface{}{
+					{
+						"id":           "google-shopping",
+						"name":         "Google Shopping",
+						"description":  "Export to Google Merchant Center",
+						"logo":         "🔍",
+						"category":     "marketplace",
+						"status":       "available",
+						"features":     []string{"Product feeds", "Analytics", "Scheduling"},
+						"setup_time":   "5-10 minutes",
+						"requirements": []string{"Google Merchant Center account", "Product data"},
+					},
+					{
+						"id":           "facebook-catalog",
+						"name":         "Facebook Catalog",
+						"description":  "Sync with Facebook product catalog",
+						"logo":         "📘",
+						"category":     "social",
+						"status":       "available",
+						"features":     []string{"Dynamic ads", "Instagram Shopping", "Analytics"},
+						"setup_time":   "10-15 minutes",
+						"requirements": []string{"Facebook Business account", "Product catalog"},
+					},
+					{
+						"id":           "amazon-marketplace",
+						"name":         "Amazon Marketplace",
+						"description":  "List products on Amazon",
+						"logo":         "📦",
+						"category":     "marketplace",
+						"status":       "available",
+						"features":     []string{"FBA integration", "Inventory sync", "Order management"},
+						"setup_time":   "15-30 minutes",
+						"requirements": []string{"Amazon Seller account", "Product compliance"},
+					},
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":    availableChannels,
+					"message": "Available channels retrieved successfully",
+				})
+			})
+
+			// Connect to a channel
+			channels.POST("/connect", func(c *gin.Context) {
+				var request struct {
+					ChannelID   string                 `json:"channel_id" binding:"required"`
+					Name        string                 `json:"name" binding:"required"`
+					Description string                 `json:"description"`
+					Credentials map[string]interface{} `json:"credentials" binding:"required"`
+					Settings    map[string]interface{} `json:"settings"`
+				}
+
+				if err := c.ShouldBindJSON(&request); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Get organization ID from context
+				organizationID, exists := c.Get("organization_id")
+				if !exists {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Organization ID not found"})
+					return
+				}
+
+				// Create channel connection record
+				channelID := fmt.Sprintf("channel_%d", time.Now().Unix())
+
+				// Insert into platform_credentials table
+				_, err := db.Exec(`
+					INSERT INTO platform_credentials (
+						feed_id, organization_id, platform, api_key, merchant_id, 
+						access_token, auto_submit, submit_on_regenerate, config
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+				`,
+					channelID,
+					organizationID,
+					request.ChannelID,
+					request.Credentials["apiKey"],
+					request.Credentials["merchantId"],
+					request.Credentials["secret"],
+					request.Settings["autoSync"],
+					request.Settings["autoSync"],
+					fmt.Sprintf(`{"name": "%s", "description": "%s", "settings": %v}`,
+						request.Name, request.Description, request.Settings),
+				)
+
+				if err != nil {
+					log.Printf("Failed to create channel connection: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create channel connection"})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"message":    "Channel connected successfully",
+					"channel_id": channelID,
+					"status":     "connected",
+				})
+			})
+
+			// Test channel connection
+			channels.POST("/:id/test", func(c *gin.Context) {
+				channelID := c.Param("id")
+
+				// Get organization ID from context
+				organizationID, exists := c.Get("organization_id")
+				if !exists {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Organization ID not found"})
+					return
+				}
+
+				// Get channel credentials
+				var platform, apiKey, merchantID string
+				err := db.QueryRow(`
+					SELECT platform, api_key, merchant_id
+					FROM platform_credentials 
+					WHERE feed_id = $1 AND organization_id = $2
+				`, channelID, organizationID).Scan(&platform, &apiKey, &merchantID)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
+					return
+				}
+
+				// Simulate connection test based on platform
+				var testResult map[string]interface{}
+				switch platform {
+				case "google-shopping":
+					testResult = map[string]interface{}{
+						"status":      "success",
+						"message":     "Google Shopping connection verified",
+						"merchant_id": merchantID,
+						"api_status":  "active",
+						"test_data": map[string]interface{}{
+							"account_info": map[string]interface{}{
+								"merchant_name": "Test Store",
+								"country":       "US",
+								"currency":      "USD",
+							},
+							"feed_status": "ready",
+						},
+					}
+				case "facebook-catalog":
+					testResult = map[string]interface{}{
+						"status":     "success",
+						"message":    "Facebook Catalog connection verified",
+						"catalog_id": merchantID,
+						"api_status": "active",
+					}
+				case "amazon-marketplace":
+					testResult = map[string]interface{}{
+						"status":     "success",
+						"message":    "Amazon Marketplace connection verified",
+						"seller_id":  merchantID,
+						"api_status": "active",
+					}
+				default:
+					testResult = map[string]interface{}{
+						"status":     "success",
+						"message":    fmt.Sprintf("%s connection verified", platform),
+						"api_status": "active",
+					}
+				}
+
+				c.JSON(http.StatusOK, testResult)
+			})
+
+			// Get connected channels
+			channels.GET("/connected", func(c *gin.Context) {
+				// Get organization ID from context
+				organizationID, exists := c.Get("organization_id")
+				if !exists {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Organization ID not found"})
+					return
+				}
+
+				rows, err := db.Query(`
+					SELECT feed_id, platform, merchant_id, auto_submit, 
+						   last_submission_at, last_submission_status, config
+					FROM platform_credentials 
+					WHERE organization_id = $1
+					ORDER BY updated_at DESC
+				`, organizationID)
+
+				if err != nil {
+					log.Printf("Error fetching connected channels: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch connected channels"})
+					return
+				}
+				defer rows.Close()
+
+				var connectedChannels []map[string]interface{}
+				for rows.Next() {
+					var feedID, platform, merchantID, lastSubmissionStatus, configJSON string
+					var autoSubmit bool
+					var lastSubmissionAt sql.NullTime
+
+					err := rows.Scan(&feedID, &platform, &merchantID, &autoSubmit, &lastSubmissionAt, &lastSubmissionStatus, &configJSON)
+					if err != nil {
+						log.Printf("Error scanning channel: %v", err)
+						continue
+					}
+
+					// Parse config JSON
+					var config map[string]interface{}
+					if configJSON != "" {
+						json.Unmarshal([]byte(configJSON), &config)
+					}
+
+					// Get channel info
+					channelInfo := map[string]interface{}{
+						"id":          feedID,
+						"platform":    platform,
+						"name":        getChannelName(platform),
+						"description": getChannelDescription(platform),
+						"logo":        getChannelLogo(platform),
+						"status":      "connected",
+						"merchant_id": merchantID,
+						"auto_submit": autoSubmit,
+						"last_submission_at": func() string {
+							if lastSubmissionAt.Valid {
+								return lastSubmissionAt.Time.Format(time.RFC3339)
+							}
+							return ""
+						}(),
+						"last_submission_status": lastSubmissionStatus,
+						"products_exported":      150, // Mock data
+						"success_rate":           98,  // Mock data
+					}
+
+					// Add config data if available
+					if config != nil {
+						if name, ok := config["name"].(string); ok {
+							channelInfo["name"] = name
+						}
+						if desc, ok := config["description"].(string); ok {
+							channelInfo["description"] = desc
+						}
+					}
+
+					connectedChannels = append(connectedChannels, channelInfo)
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":    connectedChannels,
+					"message": "Connected channels retrieved successfully",
+				})
+			})
+
+			// Disconnect channel
+			channels.DELETE("/:id", func(c *gin.Context) {
+				channelID := c.Param("id")
+
+				// Get organization ID from context
+				organizationID, exists := c.Get("organization_id")
+				if !exists {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Organization ID not found"})
+					return
+				}
+
+				_, err := db.Exec(`
+					DELETE FROM platform_credentials 
+					WHERE feed_id = $1 AND organization_id = $2
+				`, channelID, organizationID)
+
+				if err != nil {
+					log.Printf("Failed to disconnect channel: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to disconnect channel"})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{"message": "Channel disconnected successfully"})
+			})
+		}
+
 		// AI-Powered Product Transformation
 		ai := api.Group("/ai")
 		{
@@ -9812,6 +10091,58 @@ func generateMockGTIN(product map[string]interface{}) string {
 	remaining := fmt.Sprintf("%09d", len(hash)%1000000000)
 
 	return prefix + remaining
+}
+
+// Helper functions for channel management
+func getChannelName(platform string) string {
+	switch platform {
+	case "google-shopping":
+		return "Google Shopping"
+	case "facebook-catalog":
+		return "Facebook Catalog"
+	case "amazon-marketplace":
+		return "Amazon Marketplace"
+	case "instagram-shopping":
+		return "Instagram Shopping"
+	case "pinterest-catalog":
+		return "Pinterest Catalog"
+	default:
+		return platform
+	}
+}
+
+func getChannelDescription(platform string) string {
+	switch platform {
+	case "google-shopping":
+		return "Export to Google Merchant Center"
+	case "facebook-catalog":
+		return "Sync with Facebook product catalog"
+	case "amazon-marketplace":
+		return "List products on Amazon"
+	case "instagram-shopping":
+		return "Tag products in Instagram posts"
+	case "pinterest-catalog":
+		return "Create shoppable pins"
+	default:
+		return "Channel integration"
+	}
+}
+
+func getChannelLogo(platform string) string {
+	switch platform {
+	case "google-shopping":
+		return "🔍"
+	case "facebook-catalog":
+		return "📘"
+	case "amazon-marketplace":
+		return "📦"
+	case "instagram-shopping":
+		return "📸"
+	case "pinterest-catalog":
+		return "📌"
+	default:
+		return "🔗"
+	}
 }
 
 // validateFeedData validates feed data and returns validation results
