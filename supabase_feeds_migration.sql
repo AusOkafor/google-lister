@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS product_feeds (
     channel VARCHAR(100) NOT NULL CHECK (channel IN ('Google Shopping', 'Facebook', 'Instagram', 'Amazon', 'eBay', 'Pinterest', 'TikTok Shop', 'Snapchat')),
     format VARCHAR(20) NOT NULL CHECK (format IN ('xml', 'csv', 'json', 'txt')),
     
+    -- Store/Connector Filter
+    connector_id VARCHAR(255), -- Links feed to specific store/connector
+    
     -- Feed Status
     status VARCHAR(20) NOT NULL DEFAULT 'inactive' CHECK (status IN ('active', 'inactive', 'generating', 'error', 'paused')),
     
@@ -110,6 +113,7 @@ CREATE INDEX IF NOT EXISTS idx_product_feeds_organization_id ON product_feeds(or
 CREATE INDEX IF NOT EXISTS idx_product_feeds_channel ON product_feeds(channel);
 CREATE INDEX IF NOT EXISTS idx_product_feeds_status ON product_feeds(status);
 CREATE INDEX IF NOT EXISTS idx_product_feeds_created_at ON product_feeds(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_product_feeds_connector_id ON product_feeds(connector_id);
 
 -- Feed generation history indexes
 CREATE INDEX IF NOT EXISTS idx_feed_generation_history_feed_id ON feed_generation_history(feed_id);
