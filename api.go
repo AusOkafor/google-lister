@@ -7461,6 +7461,210 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				c.JSON(http.StatusOK, testResult)
 			})
 
+			// Get development Facebook Catalog credentials
+			dev.GET("/facebook-catalog-credentials", func(c *gin.Context) {
+				devCredentials := map[string]interface{}{
+					"api_key":     "1234567890123456", // Facebook App ID
+					"secret":      "dev_facebook_secret_for_testing",
+					"catalog_id":  "9876543210987654", // Facebook Catalog ID
+					"pixel_id":    "123456789012345",  // Facebook Pixel ID
+					"environment": "development",
+					"note":        "These are development credentials for Facebook Catalog testing",
+					"endpoints": map[string]interface{}{
+						"graph_api": "https://graph.facebook.com/v18.0/",
+						"catalog":   "https://graph.facebook.com/v18.0/{catalog-id}/products",
+					},
+					"setup_guide": map[string]interface{}{
+						"step_1": "Create Facebook Business Account",
+						"step_2": "Set up Business Manager",
+						"step_3": "Create Facebook Catalog",
+						"step_4": "Create Facebook App",
+						"step_5": "Get App ID and App Secret",
+						"step_6": "Generate Access Token",
+					},
+					"required_permissions": []string{
+						"catalog_management",
+						"ads_management",
+						"business_management",
+					},
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":    devCredentials,
+					"message": "Development credentials for Facebook Catalog",
+					"warning": "Use these only for development and testing",
+				})
+			})
+
+			// Automatically create Facebook Catalog
+			dev.POST("/create-facebook-catalog", func(c *gin.Context) {
+				var request struct {
+					APIKey      string `json:"api_key"`
+					Secret      string `json:"secret"`
+					CatalogName string `json:"catalog_name"`
+					BusinessID  string `json:"business_id,omitempty"`
+				}
+
+				if err := c.ShouldBindJSON(&request); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Simulate Facebook API catalog creation
+				catalogResult := map[string]interface{}{
+					"status":       "success",
+					"message":      "Facebook Catalog created successfully",
+					"catalog_id":   "9876543210987654",
+					"catalog_name": request.CatalogName,
+					"business_id":  request.BusinessID,
+					"environment":  "development",
+					"test_mode":    true,
+					"catalog_info": map[string]interface{}{
+						"name":          request.CatalogName,
+						"type":          "ecommerce",
+						"vertical":      "retail",
+						"country":       "US",
+						"currency":      "USD",
+						"language":      "en_US",
+						"timezone":      "America/New_York",
+						"created_at":    time.Now().Format(time.RFC3339),
+						"status":        "active",
+						"product_count": 0,
+					},
+					"capabilities": []string{
+						"product_upload",
+						"inventory_management",
+						"dynamic_ads",
+						"instagram_shopping",
+						"facebook_shops",
+					},
+					"next_steps": []string{
+						"Upload your product feed",
+						"Set up product categories",
+						"Configure dynamic ads",
+						"Enable Instagram Shopping",
+					},
+					"api_endpoints": map[string]string{
+						"upload_products": "https://graph.facebook.com/v18.0/{catalog-id}/products",
+						"get_products":    "https://graph.facebook.com/v18.0/{catalog-id}/products",
+						"update_product":  "https://graph.facebook.com/v18.0/{product-id}",
+						"delete_product":  "https://graph.facebook.com/v18.0/{product-id}",
+					},
+				}
+
+				c.JSON(http.StatusOK, catalogResult)
+			})
+
+			// Test Facebook Catalog connection with dev credentials
+			dev.POST("/test-facebook-connection", func(c *gin.Context) {
+				var request struct {
+					APIKey    string `json:"api_key"`
+					Secret    string `json:"secret"`
+					CatalogID string `json:"catalog_id"`
+					PixelID   string `json:"pixel_id,omitempty"`
+				}
+
+				if err := c.ShouldBindJSON(&request); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Simulate Facebook API connection test
+				testResult := map[string]interface{}{
+					"status":      "success",
+					"environment": "development",
+					"message":     "Facebook Catalog connection test successful",
+					"catalog_id":  request.CatalogID,
+					"pixel_id":    request.PixelID,
+					"api_status":  "active",
+					"test_mode":   true,
+					"account_info": map[string]interface{}{
+						"business_name": "Development Test Business",
+						"catalog_name":  "Test Product Catalog",
+						"country":       "US",
+						"currency":      "USD",
+						"account_type":  "test",
+					},
+					"capabilities": []string{
+						"product_catalog_management",
+						"dynamic_ads",
+						"instagram_shopping",
+						"facebook_shops",
+						"inventory_sync",
+					},
+					"next_steps": []string{
+						"Upload product catalog",
+						"Set up dynamic ads",
+						"Configure Instagram Shopping",
+						"Test product sync",
+					},
+				}
+
+				c.JSON(http.StatusOK, testResult)
+			})
+
+			// Generate sample Facebook Catalog feed for testing
+			dev.GET("/sample-facebook-feed", func(c *gin.Context) {
+				// Get organization ID from context
+				organizationID, exists := c.Get("organization_id")
+				if !exists {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Organization ID not found"})
+					return
+				}
+
+				// Get sample products
+				rows, err := db.Query(`
+					SELECT id, external_id, title, description, price, currency, sku, 
+						   brand, category, images, status, metadata, gtin, mpn
+					FROM products 
+					WHERE organization_id = $1
+					LIMIT 5
+				`, organizationID)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
+					return
+				}
+				defer rows.Close()
+
+				var products []map[string]interface{}
+				for rows.Next() {
+					var id, externalID, title, description, currency, sku, brand, category, images, status, metadata, gtin, mpn sql.NullString
+					var price sql.NullFloat64
+
+					err := rows.Scan(&id, &externalID, &title, &description, &price, &currency, &sku, &brand, &category, &images, &status, &metadata, &gtin, &mpn)
+					if err != nil {
+						continue
+					}
+
+					product := map[string]interface{}{
+						"id":          getStringValue(id),
+						"external_id": getStringValue(externalID),
+						"title":       getStringValue(title),
+						"description": getStringValue(description),
+						"price":       getFloatValue(price),
+						"currency":    getStringValue(currency),
+						"sku":         getStringValue(sku),
+						"brand":       getStringValue(brand),
+						"category":    getStringValue(category),
+						"images":      getStringValue(images),
+						"status":      getStringValue(status),
+						"metadata":    getStringValue(metadata),
+						"gtin":        getStringValue(gtin),
+						"mpn":         getStringValue(mpn),
+					}
+
+					products = append(products, product)
+				}
+
+				// Generate Facebook Catalog CSV feed
+				csvContent := generateFacebookCSV(products)
+
+				c.Header("Content-Type", "text/csv")
+				c.Header("Content-Disposition", "attachment; filename=sample-facebook-catalog-feed.csv")
+				c.String(http.StatusOK, csvContent)
+			})
+
 			// Generate sample Google Shopping feed for testing
 			dev.GET("/sample-google-feed", func(c *gin.Context) {
 				// Get organization ID from context
@@ -7552,13 +7756,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"setup_time":   "10-15 minutes",
 						"requirements": []string{"Facebook Business account", "Product catalog"},
 					},
+					// Other channels disabled - focusing on Facebook + Google only
 					{
 						"id":           "amazon-marketplace",
 						"name":         "Amazon Marketplace",
 						"description":  "List products on Amazon",
 						"logo":         "📦",
 						"category":     "marketplace",
-						"status":       "available",
+						"status":       "disabled",
 						"features":     []string{"FBA integration", "Inventory sync", "Order management"},
 						"setup_time":   "15-30 minutes",
 						"requirements": []string{"Amazon Seller account", "Product compliance"},
