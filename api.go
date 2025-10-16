@@ -5174,9 +5174,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					connectorFilter := ""
 					connectorArgs := []interface{}{}
 					if connectorID != "" {
-						// Cast both sides to text to handle potential UUID/VARCHAR mismatch
 						// connector_id should be $2 since organization_id is $1
-						connectorFilter = " AND connector_id::text = $2::text"
+						connectorFilter = " AND connector_id = $2"
 						connectorArgs = []interface{}{connectorID}
 						log.Printf("🔍 Filtering by connector_id: %s (type: %T)", connectorID, connectorID)
 						// Adjust all existing filter args by adding 2 to their position (org_id=1, connector_id=2)
@@ -6694,7 +6693,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				connectorFilter := ""
 				connectorArgs := []interface{}{}
 				if connectorID.String != "" {
-					connectorFilter = " AND connector_id::text = $2::text"
+					connectorFilter = " AND connector_id = $2"
 					connectorArgs = []interface{}{connectorID.String}
 					// Adjust all existing filter args by adding 2 to their position (org_id=1, connector_id=2)
 					for i := range filterArgs {
