@@ -1497,6 +1497,22 @@ func getFloatValue(nf sql.NullFloat64) float64 {
 	return 0.0
 }
 
+// getInt64Value safely extracts int64 value from sql.NullInt64
+func getInt64Value(ni sql.NullInt64) int64 {
+	if ni.Valid {
+		return ni.Int64
+	}
+	return 0
+}
+
+// getTimeValue safely extracts time value from sql.NullTime
+func getTimeValue(nt sql.NullTime) *time.Time {
+	if nt.Valid {
+		return &nt.Time
+	}
+	return nil
+}
+
 // generateGoogleShoppingXML generates XML feed for Google Shopping
 
 // AI-Powered Helper Functions with OpenRouter Integration
@@ -8005,6 +8021,145 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				c.JSON(http.StatusOK, gin.H{"message": "Channel disconnected successfully"})
+			})
+		}
+
+		// ============================================================================
+		// DASHBOARD API
+		// ============================================================================
+		dashboard := api.Group("/dashboard")
+		{
+			// Get unified dashboard data
+			dashboard.GET("/", func(c *gin.Context) {
+				// Get organization ID from context (set by auth middleware)
+				organizationID, exists := c.Get("organization_id")
+				if !exists {
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Organization ID not found"})
+					return
+				}
+
+				// Fetch all dashboard data in parallel
+				type DashboardData struct {
+					Stats        map[string]interface{}   `json:"stats"`
+					Activities   []map[string]interface{} `json:"activities"`
+					SystemStatus map[string]interface{}   `json:"system_status"`
+				}
+
+				var dashboardData DashboardData
+
+				// Get product statistics
+				var totalProducts, activeProducts int
+				var avgPrice sql.NullFloat64
+				db.QueryRow("SELECT COUNT(*) FROM products WHERE organization_id = $1", organizationID).Scan(&totalProducts)
+				db.QueryRow("SELECT COUNT(*) FROM products WHERE organization_id = $1 AND status = 'ACTIVE'", organizationID).Scan(&activeProducts)
+				db.QueryRow("SELECT AVG(price) FROM products WHERE organization_id = $1 AND price > 0", organizationID).Scan(&avgPrice)
+
+				// Get feed statistics
+				var totalFeeds int
+				db.QueryRow("SELECT COUNT(*) FROM product_feeds WHERE organization_id = $1", organizationID).Scan(&totalFeeds)
+
+				// Get connected channels (Facebook + Google only)
+				var connectedChannels []map[string]interface{}
+				rows, err := db.Query(`
+					SELECT platform, name, status, created_at 
+					FROM platform_credentials 
+					WHERE organization_id = $1 AND platform IN ('facebook', 'google_shopping')
+					ORDER BY created_at DESC
+				`, organizationID)
+				if err == nil {
+					defer rows.Close()
+					for rows.Next() {
+						var platform, name, status string
+						var createdAt time.Time
+						rows.Scan(&platform, &name, &status, &createdAt)
+						connectedChannels = append(connectedChannels, map[string]interface{}{
+							"platform":   platform,
+							"name":       name,
+							"status":     status,
+							"created_at": createdAt,
+						})
+					}
+				}
+
+				// Get recent feeds for activities
+				var recentFeeds []map[string]interface{}
+				feedRows, err := db.Query(`
+					SELECT id, name, channel, status, products_count, last_generated_at, created_at
+					FROM product_feeds 
+					WHERE organization_id = $1 
+					ORDER BY COALESCE(last_generated_at, created_at) DESC 
+					LIMIT 5
+				`, organizationID)
+				if err == nil {
+					defer feedRows.Close()
+					for feedRows.Next() {
+						var id, name, channel, status string
+						var productsCount sql.NullInt64
+						var lastGeneratedAt, createdAt sql.NullTime
+						feedRows.Scan(&id, &name, &channel, &status, &productsCount, &lastGeneratedAt, &createdAt)
+
+						recentFeeds = append(recentFeeds, map[string]interface{}{
+							"id":                id,
+							"name":              name,
+							"channel":           channel,
+							"status":            status,
+							"products_count":    getInt64Value(productsCount),
+							"last_generated_at": getTimeValue(lastGeneratedAt),
+							"created_at":        getTimeValue(createdAt),
+						})
+					}
+				}
+
+				// Build dashboard stats
+				dashboardData.Stats = map[string]interface{}{
+					"total_products":     totalProducts,
+					"active_products":    activeProducts,
+					"total_feeds":        totalFeeds,
+					"connected_channels": len(connectedChannels),
+					"average_price":      getFloatValue(avgPrice),
+				}
+
+				// Build activities from recent feeds
+				dashboardData.Activities = []map[string]interface{}{}
+				for _, feed := range recentFeeds {
+					activity := map[string]interface{}{
+						"id":          feed["id"],
+						"type":        "success",
+						"title":       fmt.Sprintf("%s feed updated", feed["channel"]),
+						"description": fmt.Sprintf("%d products in feed", feed["products_count"]),
+						"time":        feed["last_generated_at"],
+						"metadata": map[string]interface{}{
+							"product_count": feed["products_count"],
+							"channel":       feed["channel"],
+						},
+					}
+					dashboardData.Activities = append(dashboardData.Activities, activity)
+				}
+
+				// Build system status
+				dashboardData.SystemStatus = map[string]interface{}{
+					"status":             "operational",
+					"channels_ready":     len(connectedChannels) >= 2, // Facebook + Google
+					"active_channels":    len(connectedChannels),
+					"facebook_connected": false,
+					"google_connected":   false,
+				}
+
+				// Check specific channel connections
+				for _, channel := range connectedChannels {
+					if channel["platform"] == "facebook" {
+						dashboardData.SystemStatus["facebook_connected"] = true
+					}
+					if channel["platform"] == "google_shopping" {
+						dashboardData.SystemStatus["google_connected"] = true
+					}
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":      dashboardData,
+					"message":   "Dashboard data retrieved successfully",
+					"timestamp": time.Now().Format(time.RFC3339),
+				})
 			})
 		}
 
