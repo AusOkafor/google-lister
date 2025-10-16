@@ -4831,8 +4831,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					args = append(args, status)
 				}
 
-				query += " ORDER BY created_at DESC LIMIT $" + strconv.Itoa(len(args)+1) + " OFFSET $" + strconv.Itoa(len(args)+2)
 				args = append(args, limitInt, offset)
+				query += " ORDER BY created_at DESC LIMIT $" + strconv.Itoa(len(args)-1) + " OFFSET $" + strconv.Itoa(len(args))
 
 				rows, err := db.Query(query, args...)
 
@@ -4854,8 +4854,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						args = append(args, status)
 					}
 
-					query += " ORDER BY created_at DESC LIMIT $" + strconv.Itoa(len(args)+1) + " OFFSET $" + strconv.Itoa(len(args)+2)
 					args = append(args, limitInt, offset)
+					query += " ORDER BY created_at DESC LIMIT $" + strconv.Itoa(len(args)-1) + " OFFSET $" + strconv.Itoa(len(args))
 
 					rows, err = db.Query(query, args...)
 				}
