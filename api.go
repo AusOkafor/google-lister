@@ -10188,18 +10188,7 @@ func getDefaultTemplates() []map[string]interface{} {
 			"isSystemTemplate": true,
 			"isActive":         true,
 		},
-		{
-			"id":               "instagram-shopping-standard",
-			"name":             "Instagram Shopping Standard",
-			"description":      "Standard JSON feed for Instagram Shopping with required fields",
-			"channel":          "Instagram",
-			"format":           "json",
-			"fieldMapping":     `{"id": "product.external_id", "title": "product.title", "description": "product.description", "image_link": "product.images[0]", "link": "product.link", "price": "product.price", "brand": "product.brand", "availability": "product.availability", "condition": "product.condition"}`,
-			"filters":          `{}`,
-			"transformations":  `{}`,
-			"isSystemTemplate": true,
-			"isActive":         true,
-		},
+		// Instagram template removed - focusing on Facebook + Google only
 	}
 }
 
