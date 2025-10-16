@@ -11196,7 +11196,7 @@ func applyProductFilters(whereClauses *[]string, args *[]interface{}, argIndex *
 		if len(excludeTagStrings) > 0 {
 			excludeConditions := make([]string, len(excludeTagStrings))
 			for i, tag := range excludeTagStrings {
-				excludeConditions[i] = fmt.Sprintf("metadata::text NOT LIKE $%d", *argIndex)
+				excludeConditions[i] = fmt.Sprintf("COALESCE(metadata::text, '{}') NOT LIKE $%d", *argIndex)
 				*args = append(*args, "%\""+tag+"\"%")
 				*argIndex++
 			}
@@ -11234,7 +11234,7 @@ func applyProductFilters(whereClauses *[]string, args *[]interface{}, argIndex *
 		if len(excludeColStrings) > 0 {
 			excludeConditions := make([]string, len(excludeColStrings))
 			for i, col := range excludeColStrings {
-				excludeConditions[i] = fmt.Sprintf("metadata::text NOT LIKE $%d", *argIndex)
+				excludeConditions[i] = fmt.Sprintf("COALESCE(metadata::text, '{}') NOT LIKE $%d", *argIndex)
 				*args = append(*args, "%\""+col+"\"%")
 				*argIndex++
 			}
