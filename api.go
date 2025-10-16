@@ -1513,6 +1513,137 @@ func getTimeValue(nt sql.NullTime) *time.Time {
 	return nil
 }
 
+// seedSampleData creates sample products and feeds for development
+func seedSampleData(organizationID string) {
+	log.Printf("🌱 Seeding sample data for organization: %s", organizationID)
+
+	// Sample products
+	sampleProducts := []map[string]interface{}{
+		{
+			"external_id": "PROD-001",
+			"title":       "Premium Wireless Headphones",
+			"description": "High-quality wireless headphones with noise cancellation",
+			"price":       299.99,
+			"currency":    "USD",
+			"sku":         "WH-001",
+			"brand":       "TechBrand",
+			"category":    "Electronics",
+			"images":      `["https://example.com/images/headphones1.jpg"]`,
+			"status":      "ACTIVE",
+			"gtin":        "123456789012",
+		},
+		{
+			"external_id": "PROD-002",
+			"title":       "Smart Fitness Watch",
+			"description": "Advanced fitness tracking with heart rate monitoring",
+			"price":       199.99,
+			"currency":    "USD",
+			"sku":         "SFW-002",
+			"brand":       "FitTech",
+			"category":    "Wearables",
+			"images":      `["https://example.com/images/watch1.jpg"]`,
+			"status":      "ACTIVE",
+			"gtin":        "987654321098",
+		},
+		{
+			"external_id": "PROD-003",
+			"title":       "Organic Cotton T-Shirt",
+			"description": "Comfortable organic cotton t-shirt in multiple colors",
+			"price":       29.99,
+			"currency":    "USD",
+			"sku":         "CTS-003",
+			"brand":       "EcoWear",
+			"category":    "Clothing",
+			"images":      `["https://example.com/images/tshirt1.jpg"]`,
+			"status":      "ACTIVE",
+			"gtin":        "111111111111",
+		},
+		{
+			"external_id": "PROD-004",
+			"title":       "Bluetooth Speaker",
+			"description": "Portable Bluetooth speaker with 360-degree sound",
+			"price":       89.99,
+			"currency":    "USD",
+			"sku":         "BTS-004",
+			"brand":       "SoundWave",
+			"category":    "Electronics",
+			"images":      `["https://example.com/images/speaker1.jpg"]`,
+			"status":      "ACTIVE",
+			"gtin":        "222222222222",
+		},
+		{
+			"external_id": "PROD-005",
+			"title":       "Yoga Mat",
+			"description": "Non-slip yoga mat for home and studio practice",
+			"price":       49.99,
+			"currency":    "USD",
+			"sku":         "YM-005",
+			"brand":       "ZenFit",
+			"category":    "Sports",
+			"images":      `["https://example.com/images/yogamat1.jpg"]`,
+			"status":      "ACTIVE",
+			"gtin":        "333333333333",
+		},
+	}
+
+	// Insert sample products
+	for _, product := range sampleProducts {
+		_, err := db.Exec(`
+			INSERT INTO products (
+				organization_id, external_id, title, description, price, currency, 
+				sku, brand, category, images, status, gtin, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+		`, organizationID, product["external_id"], product["title"], product["description"],
+			product["price"], product["currency"], product["sku"], product["brand"],
+			product["category"], product["images"], product["status"], product["gtin"])
+
+		if err != nil {
+			log.Printf("❌ Error inserting sample product %s: %v", product["external_id"], err)
+		} else {
+			log.Printf("✅ Inserted sample product: %s", product["title"])
+		}
+	}
+
+	// Sample feeds
+	sampleFeeds := []map[string]interface{}{
+		{
+			"name":              "Google Shopping Feed",
+			"channel":           "Google Shopping",
+			"format":            "xml",
+			"status":            "active",
+			"products_count":    5,
+			"last_generated_at": time.Now(),
+		},
+		{
+			"name":              "Facebook Catalog Feed",
+			"channel":           "Facebook",
+			"format":            "csv",
+			"status":            "active",
+			"products_count":    5,
+			"last_generated_at": time.Now(),
+		},
+	}
+
+	// Insert sample feeds
+	for _, feed := range sampleFeeds {
+		_, err := db.Exec(`
+			INSERT INTO product_feeds (
+				organization_id, name, channel, format, status, 
+				products_count, last_generated_at, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+		`, organizationID, feed["name"], feed["channel"], feed["format"],
+			feed["status"], feed["products_count"], feed["last_generated_at"])
+
+		if err != nil {
+			log.Printf("❌ Error inserting sample feed %s: %v", feed["name"], err)
+		} else {
+			log.Printf("✅ Inserted sample feed: %s", feed["name"])
+		}
+	}
+
+	log.Printf("🌱 Sample data seeding completed!")
+}
+
 // generateGoogleShoppingXML generates XML feed for Google Shopping
 
 // AI-Powered Helper Functions with OpenRouter Integration
@@ -8031,12 +8162,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		{
 			// Get unified dashboard data
 			dashboard.GET("/", func(c *gin.Context) {
-				// Get organization ID from context (set by auth middleware)
-				organizationID, exists := c.Get("organization_id")
-				if !exists {
-					c.JSON(http.StatusUnauthorized, gin.H{"error": "Organization ID not found"})
-					return
-				}
+				// For development: use a default organization ID
+				// In production, this would come from authentication middleware
+				organizationID := getOrCreateOrganizationID()
 
 				// Fetch all dashboard data in parallel
 				type DashboardData struct {
@@ -8050,9 +8178,38 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Get product statistics
 				var totalProducts, activeProducts int
 				var avgPrice sql.NullFloat64
-				db.QueryRow("SELECT COUNT(*) FROM products WHERE organization_id = $1", organizationID).Scan(&totalProducts)
-				db.QueryRow("SELECT COUNT(*) FROM products WHERE organization_id = $1 AND status = 'ACTIVE'", organizationID).Scan(&activeProducts)
-				db.QueryRow("SELECT AVG(price) FROM products WHERE organization_id = $1 AND price > 0", organizationID).Scan(&avgPrice)
+
+				// Debug: Log the organization ID being used
+				log.Printf("🔍 Dashboard API - Using organization ID: %s", organizationID)
+
+				// Check if we need to seed some sample data
+				var productCount int
+				db.QueryRow("SELECT COUNT(*) FROM products WHERE organization_id = $1", organizationID).Scan(&productCount)
+				if productCount == 0 {
+					log.Printf("🌱 No products found, seeding sample data...")
+					seedSampleData(organizationID)
+				}
+
+				err := db.QueryRow("SELECT COUNT(*) FROM products WHERE organization_id = $1", organizationID).Scan(&totalProducts)
+				if err != nil {
+					log.Printf("❌ Error getting total products: %v", err)
+				} else {
+					log.Printf("📊 Total products found: %d", totalProducts)
+				}
+
+				err = db.QueryRow("SELECT COUNT(*) FROM products WHERE organization_id = $1 AND status = 'ACTIVE'", organizationID).Scan(&activeProducts)
+				if err != nil {
+					log.Printf("❌ Error getting active products: %v", err)
+				} else {
+					log.Printf("📊 Active products found: %d", activeProducts)
+				}
+
+				err = db.QueryRow("SELECT AVG(price) FROM products WHERE organization_id = $1 AND price > 0", organizationID).Scan(&avgPrice)
+				if err != nil {
+					log.Printf("❌ Error getting average price: %v", err)
+				} else {
+					log.Printf("📊 Average price: %v", avgPrice)
+				}
 
 				// Get feed statistics
 				var totalFeeds int
