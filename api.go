@@ -7969,17 +7969,17 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						access_token, auto_submit, submit_on_regenerate, config
 					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 				`,
-					channelID,
-					organizationID,
-					request.ChannelID,
-					request.Name,
-					request.Credentials["apiKey"],
-					request.Credentials["merchantId"],
-					request.Credentials["secret"],
-					request.Settings["autoSync"],
-					request.Settings["autoSync"],
+					channelID,                         // feed_id (VARCHAR)
+					organizationID,                    // organization_id (UUID)
+					request.ChannelID,                 // platform (VARCHAR)
+					request.Name,                      // name (VARCHAR)
+					request.Credentials["apiKey"],     // api_key (VARCHAR)
+					request.Credentials["merchantId"], // merchant_id (VARCHAR)
+					request.Credentials["secret"],     // access_token (TEXT)
+					request.Settings["autoSync"],      // auto_submit (BOOLEAN)
+					request.Settings["autoSync"],      // submit_on_regenerate (BOOLEAN)
 					fmt.Sprintf(`{"name": "%s", "description": "%s", "settings": %v}`,
-						request.Name, request.Description, request.Settings),
+						request.Name, request.Description, request.Settings), // config (JSONB)
 				)
 
 				if err != nil {
