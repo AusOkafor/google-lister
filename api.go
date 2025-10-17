@@ -7992,7 +7992,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				if err != nil {
 					log.Printf("Failed to create channel connection: %v", err)
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create channel connection"})
+					log.Printf("SQL Error Details: %+v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create channel connection", "details": err.Error()})
 					return
 				}
 
