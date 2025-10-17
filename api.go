@@ -7962,8 +7962,42 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Create channel connection record using proper UUID
 				channelID := fmt.Sprintf("channel_%d", time.Now().Unix())
-				// For database storage, we need a proper UUID format
-				feedID := uuid.New().String()
+
+				// Check if there are any existing feeds to use, or create a new one
+				var existingFeedID string
+				err := db.QueryRow(`
+					SELECT id FROM product_feeds 
+					WHERE organization_id = $1 
+					ORDER BY created_at DESC 
+					LIMIT 1
+				`, organizationID).Scan(&existingFeedID)
+
+				var feedID string
+				if err != nil {
+					// No existing feed found, create a new one
+					log.Printf("No existing feed found, creating new feed")
+					feedID = uuid.New().String()
+
+					// Create a new feed record
+					_, err = db.Exec(`
+						INSERT INTO product_feeds (
+							id, organization_id, name, channel, format, status, 
+							products_count, created_at, updated_at
+						) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+					`, feedID, organizationID, request.Name, request.ChannelID, "xml", "active", 0)
+
+					if err != nil {
+						log.Printf("Failed to create feed: %v", err)
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create feed"})
+						return
+					}
+					log.Printf("Created new feed with ID: %s", feedID)
+				} else {
+					// Use existing feed
+					feedID = existingFeedID
+					log.Printf("Using existing feed with ID: %s", feedID)
+				}
+
 				log.Printf("Debug: channelID = %s (type: %T)", channelID, channelID)
 				log.Printf("Debug: feedID = %s (type: %T)", feedID, feedID)
 
