@@ -7965,13 +7965,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Insert into platform_credentials table
 				_, err := db.Exec(`
 					INSERT INTO platform_credentials (
-						feed_id, organization_id, platform, api_key, merchant_id, 
+						feed_id, organization_id, platform, name, api_key, merchant_id, 
 						access_token, auto_submit, submit_on_regenerate, config
-					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 				`,
 					channelID,
 					organizationID,
 					request.ChannelID,
+					request.Name,
 					request.Credentials["apiKey"],
 					request.Credentials["merchantId"],
 					request.Credentials["secret"],
