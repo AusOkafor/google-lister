@@ -7966,19 +7966,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Insert into platform_credentials table
 				log.Printf("Debug: About to execute SQL with parameters:")
-				log.Printf("  $1 (organization_id): %s", organizationID)
-				log.Printf("  $2 (feed_id): %s", channelID)
+				log.Printf("  $1 (feed_id): %s", channelID)
+				log.Printf("  $2 (organization_id): %s", organizationID)
 				log.Printf("  $3 (platform): %s", request.ChannelID)
 				log.Printf("  $4 (name): %s", request.Name)
 
 				_, err := db.Exec(`
 					INSERT INTO platform_credentials (
-						organization_id, feed_id, platform, name, api_key, merchant_id, 
+						feed_id, organization_id, platform, name, api_key, merchant_id, 
 						access_token, auto_submit, submit_on_regenerate, config
 					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 				`,
-					organizationID,                       // $1: organization_id (UUID)
-					channelID,                            // $2: feed_id (VARCHAR)
+					channelID,                            // $1: feed_id (VARCHAR)
+					organizationID,                       // $2: organization_id (UUID)
 					request.ChannelID,                    // $3: platform (VARCHAR)
 					request.Name,                         // $4: name (VARCHAR)
 					request.Credentials["apiKey"],        // $5: api_key (VARCHAR)
