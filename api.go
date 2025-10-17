@@ -1213,6 +1213,24 @@ func initDB() error {
 			read_at TIMESTAMP WITH TIME ZONE,
 			expires_at TIMESTAMP WITH TIME ZONE
 		);`,
+		`CREATE TABLE IF NOT EXISTS platform_credentials (
+			feed_id VARCHAR(255) PRIMARY KEY,
+			organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000000'::uuid,
+			platform VARCHAR(100) NOT NULL,
+			name VARCHAR(255),
+			api_key VARCHAR(500),
+			merchant_id VARCHAR(255),
+			access_token TEXT,
+			auto_submit BOOLEAN DEFAULT FALSE,
+			submit_on_regenerate BOOLEAN DEFAULT FALSE,
+			config JSONB DEFAULT '{}',
+			last_submission_at TIMESTAMP WITH TIME ZONE,
+			last_submission_status VARCHAR(50),
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_platform_credentials_organization_id ON platform_credentials(organization_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_platform_credentials_platform ON platform_credentials(platform);`,
 	}
 
 	// Execute all table creation statements
