@@ -7965,23 +7965,29 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Debug: channelID = %s (type: %T)", channelID, channelID)
 
 				// Insert into platform_credentials table
+				log.Printf("Debug: About to execute SQL with parameters:")
+				log.Printf("  $1 (feed_id): %s", channelID)
+				log.Printf("  $2 (organization_id): %s", organizationID)
+				log.Printf("  $3 (platform): %s", request.ChannelID)
+				log.Printf("  $4 (name): %s", request.Name)
+				
 				_, err := db.Exec(`
 					INSERT INTO platform_credentials (
 						feed_id, organization_id, platform, name, api_key, merchant_id, 
 						access_token, auto_submit, submit_on_regenerate, config
 					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 				`,
-					channelID,                            // feed_id (VARCHAR)
-					organizationID,                       // organization_id (UUID)
-					request.ChannelID,                    // platform (VARCHAR)
-					request.Name,                         // name (VARCHAR)
-					request.Credentials["apiKey"],        // api_key (VARCHAR)
-					request.Credentials["merchantId"],    // merchant_id (VARCHAR)
-					request.Credentials["secret"],        // access_token (TEXT)
-					request.Settings["autoSync"] == true, // auto_submit (BOOLEAN)
-					request.Settings["autoSync"] == true, // submit_on_regenerate (BOOLEAN)
+					channelID,                            // $1: feed_id (VARCHAR)
+					organizationID,                       // $2: organization_id (UUID)
+					request.ChannelID,                    // $3: platform (VARCHAR)
+					request.Name,                         // $4: name (VARCHAR)
+					request.Credentials["apiKey"],        // $5: api_key (VARCHAR)
+					request.Credentials["merchantId"],    // $6: merchant_id (VARCHAR)
+					request.Credentials["secret"],        // $7: access_token (TEXT)
+					request.Settings["autoSync"] == true, // $8: auto_submit (BOOLEAN)
+					request.Settings["autoSync"] == true, // $9: submit_on_regenerate (BOOLEAN)
 					fmt.Sprintf(`{"name": "%s", "description": "%s", "settings": %v}`,
-						request.Name, request.Description, request.Settings), // config (JSONB)
+						request.Name, request.Description, request.Settings), // $10: config (JSONB)
 				)
 
 				if err != nil {
