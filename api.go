@@ -7960,24 +7960,27 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				organizationID := getOrCreateOrganizationID()
 				log.Printf("Debug: organizationID = %s (type: %T)", organizationID, organizationID)
 
-				// Create channel connection record
+				// Create channel connection record using proper UUID
 				channelID := fmt.Sprintf("channel_%d", time.Now().Unix())
+				// For database storage, we need a proper UUID format
+				feedID := uuid.New().String()
 				log.Printf("Debug: channelID = %s (type: %T)", channelID, channelID)
+				log.Printf("Debug: feedID = %s (type: %T)", feedID, feedID)
 
 				// Insert into platform_credentials table
 				log.Printf("Debug: About to execute SQL with parameters:")
-				log.Printf("  $1 (feed_id): %s", channelID)
-				log.Printf("  $2 (organization_id): %s", organizationID)
+				log.Printf("  $1 (organization_id): %s", organizationID)
+				log.Printf("  $2 (feed_id): %s", feedID)
 				log.Printf("  $3 (platform): %s", request.ChannelID)
 				log.Printf("  $4 (name): %s", request.Name)
 
-				// Try a simpler INSERT first to test the basic structure
+				// Try with different column order - maybe organization_id is first in the table
 				_, err := db.Exec(`
-					INSERT INTO platform_credentials (feed_id, organization_id, platform, name)
+					INSERT INTO platform_credentials (organization_id, feed_id, platform, name)
 					VALUES ($1, $2, $3, $4)
 				`,
-					channelID,         // $1: feed_id (VARCHAR)
-					organizationID,    // $2: organization_id (UUID)
+					organizationID,    // $1: organization_id (UUID)
+					feedID,            // $2: feed_id (UUID)
 					request.ChannelID, // $3: platform (VARCHAR)
 					request.Name,      // $4: name (VARCHAR)
 				)
