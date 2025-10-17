@@ -7958,9 +7958,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// For development: use a default organization ID
 				// In production, this would come from authentication middleware
 				organizationID := getOrCreateOrganizationID()
+				log.Printf("Debug: organizationID = %s (type: %T)", organizationID, organizationID)
 
 				// Create channel connection record
 				channelID := fmt.Sprintf("channel_%d", time.Now().Unix())
+				log.Printf("Debug: channelID = %s (type: %T)", channelID, channelID)
 
 				// Insert into platform_credentials table
 				_, err := db.Exec(`
@@ -7969,15 +7971,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						access_token, auto_submit, submit_on_regenerate, config
 					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 				`,
-					channelID,                         // feed_id (VARCHAR)
-					organizationID,                    // organization_id (UUID)
-					request.ChannelID,                 // platform (VARCHAR)
-					request.Name,                      // name (VARCHAR)
-					request.Credentials["apiKey"],     // api_key (VARCHAR)
-					request.Credentials["merchantId"], // merchant_id (VARCHAR)
-					request.Credentials["secret"],     // access_token (TEXT)
-					request.Settings["autoSync"],      // auto_submit (BOOLEAN)
-					request.Settings["autoSync"],      // submit_on_regenerate (BOOLEAN)
+					channelID,                            // feed_id (VARCHAR)
+					organizationID,                       // organization_id (UUID)
+					request.ChannelID,                    // platform (VARCHAR)
+					request.Name,                         // name (VARCHAR)
+					request.Credentials["apiKey"],        // api_key (VARCHAR)
+					request.Credentials["merchantId"],    // merchant_id (VARCHAR)
+					request.Credentials["secret"],        // access_token (TEXT)
+					request.Settings["autoSync"] == true, // auto_submit (BOOLEAN)
+					request.Settings["autoSync"] == true, // submit_on_regenerate (BOOLEAN)
 					fmt.Sprintf(`{"name": "%s", "description": "%s", "settings": %v}`,
 						request.Name, request.Description, request.Settings), // config (JSONB)
 				)
