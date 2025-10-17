@@ -8009,7 +8009,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				log.Printf("  $4 (name): %s", request.Name)
 
 				// Try with different column order - maybe organization_id is first in the table
-				_, err := db.Exec(`
+				_, err = db.Exec(`
 					INSERT INTO platform_credentials (organization_id, feed_id, platform, name)
 					VALUES ($1, $2, $3, $4)
 				`,
