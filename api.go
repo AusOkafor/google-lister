@@ -8069,10 +8069,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				rows, err := db.Query(`
 					SELECT feed_id, platform, merchant_id, auto_submit, 
-						   last_submission_at, last_submission_status, config
+						   last_submission_at, last_submission_status
 					FROM platform_credentials 
 					WHERE organization_id = $1
-					ORDER BY updated_at DESC
+					ORDER BY created_at DESC
 				`, organizationID)
 
 				if err != nil {
@@ -8084,20 +8084,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var connectedChannels []map[string]interface{}
 				for rows.Next() {
-					var feedID, platform, merchantID, lastSubmissionStatus, configJSON string
+					var feedID, platform, merchantID, lastSubmissionStatus string
 					var autoSubmit bool
 					var lastSubmissionAt sql.NullTime
 
-					err := rows.Scan(&feedID, &platform, &merchantID, &autoSubmit, &lastSubmissionAt, &lastSubmissionStatus, &configJSON)
+					err := rows.Scan(&feedID, &platform, &merchantID, &autoSubmit, &lastSubmissionAt, &lastSubmissionStatus)
 					if err != nil {
 						log.Printf("Error scanning channel: %v", err)
 						continue
-					}
-
-					// Parse config JSON
-					var config map[string]interface{}
-					if configJSON != "" {
-						json.Unmarshal([]byte(configJSON), &config)
 					}
 
 					// Get channel info
@@ -8121,15 +8115,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"success_rate":           98,  // Mock data
 					}
 
-					// Add config data if available
-					if config != nil {
-						if name, ok := config["name"].(string); ok {
-							channelInfo["name"] = name
-						}
-						if desc, ok := config["description"].(string); ok {
-							channelInfo["description"] = desc
-						}
-					}
+					// Config data removed for now - will be added back when table schema is fixed
 
 					connectedChannels = append(connectedChannels, channelInfo)
 				}
