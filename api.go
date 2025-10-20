@@ -8008,13 +8008,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				log.Printf("  $3 (platform): %s", request.ChannelID)
 				log.Printf("  $4 (name): %s", request.Name)
 
-				// Try with different column order - maybe organization_id is first in the table
+				// Insert with correct column order - feed_id is the primary key
 				_, err = db.Exec(`
-					INSERT INTO platform_credentials (organization_id, feed_id, platform, name)
+					INSERT INTO platform_credentials (feed_id, organization_id, platform, name)
 					VALUES ($1, $2, $3, $4)
 				`,
-					organizationID,    // $1: organization_id (UUID)
-					feedID,            // $2: feed_id (UUID)
+					feedID,            // $1: feed_id (VARCHAR) - PRIMARY KEY
+					organizationID,    // $2: organization_id (UUID)
 					request.ChannelID, // $3: platform (VARCHAR)
 					request.Name,      // $4: name (VARCHAR)
 				)
