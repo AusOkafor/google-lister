@@ -72,8 +72,12 @@ func New(cfg *config.Config, logger *logger.Logger, db *database.Database) *Serv
 		channels := v1.Group("/channels")
 		{
 			channels.GET("", channelHandler.List)
+			channels.GET("/available", channelHandler.Available)
+			channels.GET("/connected", channelHandler.Connected)
 			channels.GET("/:id", channelHandler.Get)
 			channels.POST("", channelHandler.Create)
+			channels.POST("/connect", channelHandler.Connect)
+			channels.POST("/:id/test", channelHandler.Test)
 			channels.PUT("/:id", channelHandler.Update)
 			channels.DELETE("/:id", channelHandler.Delete)
 			channels.POST("/:id/sync", channelHandler.Sync)
