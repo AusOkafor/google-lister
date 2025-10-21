@@ -7989,6 +7989,17 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			// Connect to a channel
 			channels.POST("/connect", func(c *gin.Context) {
 				log.Printf("=== CHANNEL CONNECT DEBUG START ===")
+				log.Printf("Request method: %s", c.Request.Method)
+				log.Printf("Request URL: %s", c.Request.URL.String())
+				log.Printf("Content-Type: %s", c.GetHeader("Content-Type"))
+
+				// First, let's just return a simple response to test if the endpoint is reachable
+				log.Printf("=== TESTING SIMPLE RESPONSE ===")
+				c.JSON(http.StatusOK, gin.H{
+					"message":   "Connect endpoint reached successfully",
+					"timestamp": time.Now().Format(time.RFC3339),
+				})
+				return
 
 				var request struct {
 					ChannelID   string                 `json:"channel_id" binding:"required"`
