@@ -8009,12 +8009,25 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// First, try to create a simple feed record
 				feedID := uuid.New().String()
 
+				// Map the channel ID to a valid channel name for the constraint
+				var validChannel string
+				switch request.ChannelID {
+				case "facebook-catalog":
+					validChannel = "Facebook"
+				case "google-shopping":
+					validChannel = "Google Shopping"
+				case "instagram":
+					validChannel = "Instagram"
+				default:
+					validChannel = "Other"
+				}
+
 				_, err := db.Exec(`
 					INSERT INTO product_feeds (
-						oid, organization_id, name, channel, format, status, 
+						organization_id, name, channel, format, status, 
 						products_count, connector_id, created_at, updated_at
-					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-				`, feedID, organizationID, request.Name, request.ChannelID, "xml", "active", 0, "default_connector")
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+				`, organizationID, request.Name, validChannel, "xml", "active", 0, "default_connector")
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{
