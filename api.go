@@ -7988,12 +7988,20 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 			// Connect to a channel
 			channels.POST("/connect", func(c *gin.Context) {
+				// Immediate logging to ensure we capture this
+				fmt.Printf("=== CHANNEL CONNECT DEBUG START ===\n")
 				log.Printf("=== CHANNEL CONNECT DEBUG START ===")
+				fmt.Printf("Request method: %s\n", c.Request.Method)
 				log.Printf("Request method: %s", c.Request.Method)
-				log.Printf("Request URL: %s", c.Request.URL.String())
-				log.Printf("Content-Type: %s", c.GetHeader("Content-Type"))
 
-				// Now let's process the actual request
+				// Add panic recovery to catch any errors
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Printf("PANIC in channel connect: %v\n", r)
+						log.Printf("PANIC in channel connect: %v", r)
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error", "details": fmt.Sprintf("%v", r)})
+					}
+				}()
 
 				var request struct {
 					ChannelID   string                 `json:"channel_id" binding:"required"`
@@ -8013,13 +8021,16 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// For development: use a default organization ID
 				// In production, this would come from authentication middleware
+				fmt.Printf("Getting organization ID...\n")
 				organizationID := getOrCreateOrganizationID()
+				fmt.Printf("Organization ID: %s\n", organizationID)
 				log.Printf("Debug: organizationID = %s (type: %T)", organizationID, organizationID)
 
 				// Create channel connection record using proper UUID
 				channelID := fmt.Sprintf("channel_%d", time.Now().Unix())
 
 				// Check if there are any existing feeds to use, or create a new one
+				fmt.Printf("Checking for existing feeds...\n")
 				log.Printf("Checking for existing feeds for organization: %s", organizationID)
 				var existingFeedID string
 				err := db.QueryRow(`
@@ -8030,8 +8041,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				`, organizationID).Scan(&existingFeedID)
 
 				if err != nil {
+					fmt.Printf("Error querying product_feeds table: %v\n", err)
 					log.Printf("Error querying product_feeds table: %v", err)
 				} else {
+					fmt.Printf("Found existing feed ID: %s\n", existingFeedID)
 					log.Printf("Found existing feed ID: %s", existingFeedID)
 				}
 
@@ -8072,6 +8085,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				log.Printf("  $4 (name): %s", request.Name)
 
 				// Insert with correct column order - id is auto-generated, feed_id is a separate column
+				fmt.Printf("Attempting to insert into platform_credentials...\n")
 				log.Printf("Attempting to insert into platform_credentials with:")
 				log.Printf("  organizationID: %s", organizationID)
 				log.Printf("  feedID: %s", feedID)
@@ -8089,8 +8103,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				)
 
 				if err != nil {
+					fmt.Printf("Failed to create channel connection: %v\n", err)
 					log.Printf("Failed to create channel connection: %v", err)
 					log.Printf("SQL Error Details: %+v", err)
+					fmt.Printf("=== CHANNEL CONNECT DEBUG END (ERROR) ===\n")
 					log.Printf("=== CHANNEL CONNECT DEBUG END (ERROR) ===")
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create channel connection", "details": err.Error()})
 					return
