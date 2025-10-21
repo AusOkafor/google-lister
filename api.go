@@ -8005,11 +8005,47 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Step 2: Test organization ID creation
 				organizationID := getOrCreateOrganizationID()
 
+				// Step 3: Test database operations
+				// First, try to create a simple feed record
+				feedID := uuid.New().String()
+
+				_, err := db.Exec(`
+					INSERT INTO product_feeds (
+						id, organization_id, name, channel, format, status, 
+						products_count, created_at, updated_at
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+				`, feedID, organizationID, request.Name, request.ChannelID, "xml", "active", 0)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":   "Failed to create feed",
+						"details": err.Error(),
+						"step":    "feed_creation",
+					})
+					return
+				}
+
+				// Step 4: Try to insert into platform_credentials
+				_, err = db.Exec(`
+					INSERT INTO platform_credentials (organization_id, feed_id, platform, name)
+					VALUES ($1, $2, $3, $4)
+				`, organizationID, feedID, request.ChannelID, request.Name)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":   "Failed to create platform credentials",
+						"details": err.Error(),
+						"step":    "platform_credentials",
+					})
+					return
+				}
+
 				c.JSON(http.StatusOK, gin.H{
-					"message":         "Channel connected successfully (step 2)",
-					"channel_id":      "test_channel_123",
+					"message":         "Channel connected successfully (step 4)",
+					"channel_id":      feedID,
 					"organization_id": organizationID,
-					"request_name":    request.Name,
+					"feed_id":         feedID,
+					"platform":        request.ChannelID,
 					"status":          "connected",
 					"timestamp":       time.Now().Format(time.RFC3339),
 				})
