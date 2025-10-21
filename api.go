@@ -8065,20 +8065,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Step 4: Try to insert into platform_credentials for backward compatibility
-				_, err = db.Exec(`
-					INSERT INTO platform_credentials (organization_id, feed_id, platform, name)
-					VALUES ($1, $2, $3, $4)
-				`, organizationID, channelID, request.ChannelID, request.Name)
-
-				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{
-						"error":   "Failed to create platform credentials",
-						"details": err.Error(),
-						"step":    "platform_credentials",
-					})
-					return
-				}
+				// Step 4: Channel created successfully - no need for platform_credentials
+				// The platform_credentials table is for feeds, not channels
+				// Channel credentials are stored directly in the channels table
 
 				c.JSON(http.StatusOK, gin.H{
 					"message":         "Channel connected successfully",
