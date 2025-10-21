@@ -8155,11 +8155,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				organizationID := getOrCreateOrganizationID()
 
 				rows, err := db.Query(`
-					SELECT feed_id, platform, name
-					FROM platform_credentials 
-					WHERE organization_id = $1
+					SELECT id, name, type, status, created_at
+					FROM channels 
+					WHERE status = 'ACTIVE'
 					ORDER BY created_at DESC
-				`, organizationID)
+				`)
 
 				if err != nil {
 					log.Printf("Error fetching connected channels: %v", err)
@@ -8170,27 +8170,43 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var connectedChannels []map[string]interface{}
 				for rows.Next() {
-					var feedID, platform, name string
+					var channelID, name, channelType, status string
+					var createdAt string
 
-					err := rows.Scan(&feedID, &platform, &name)
+					err := rows.Scan(&channelID, &name, &channelType, &status, &createdAt)
 					if err != nil {
 						log.Printf("Error scanning channel: %v", err)
 						continue
 					}
 
+					// Map channel type back to platform name for display
+					var platform string
+					switch channelType {
+					case "META_CATALOG":
+						platform = "facebook-catalog"
+					case "GOOGLE_MERCHANT_CENTER":
+						platform = "google-shopping"
+					case "PINTEREST_CATALOG":
+						platform = "pinterest"
+					case "TIKTOK_SHOPPING":
+						platform = "tiktok"
+					default:
+						platform = channelType
+					}
+
 					// Get channel info
 					channelInfo := map[string]interface{}{
-						"id":                feedID,
+						"id":                channelID,
 						"platform":          platform,
 						"name":              name,
+						"type":              channelType,
 						"description":       getChannelDescription(platform),
 						"logo":              getChannelLogo(platform),
 						"status":            "connected",
 						"products_exported": 150, // Mock data
 						"success_rate":      98,  // Mock data
+						"created_at":        createdAt,
 					}
-
-					// Config data removed for now - will be added back when table schema is fixed
 
 					connectedChannels = append(connectedChannels, channelInfo)
 				}
