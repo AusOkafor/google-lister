@@ -1213,6 +1213,18 @@ func initDB() error {
 			read_at TIMESTAMP WITH TIME ZONE,
 			expires_at TIMESTAMP WITH TIME ZONE
 		);`,
+		`CREATE TABLE IF NOT EXISTS product_feeds (
+			id VARCHAR(255) PRIMARY KEY,
+			organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000000'::uuid,
+			name VARCHAR(255) NOT NULL,
+			channel VARCHAR(100) NOT NULL,
+			format VARCHAR(50) DEFAULT 'xml',
+			status VARCHAR(50) DEFAULT 'active',
+			products_count INTEGER DEFAULT 0,
+			connector_id VARCHAR(255),
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		);`,
 		`CREATE TABLE IF NOT EXISTS platform_credentials (
 			feed_id VARCHAR(255) PRIMARY KEY,
 			organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000000'::uuid,
@@ -1229,6 +1241,8 @@ func initDB() error {
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 		);`,
+		`CREATE INDEX IF NOT EXISTS idx_product_feeds_organization_id ON product_feeds(organization_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_product_feeds_channel ON product_feeds(channel);`,
 		`CREATE INDEX IF NOT EXISTS idx_platform_credentials_organization_id ON platform_credentials(organization_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_platform_credentials_platform ON platform_credentials(platform);`,
 	}
@@ -8008,13 +8022,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				log.Printf("  $3 (platform): %s", request.ChannelID)
 				log.Printf("  $4 (name): %s", request.Name)
 
-				// Insert with correct column order - feed_id is the primary key
+				// Insert with correct column order - id is auto-generated, feed_id is a separate column
 				_, err = db.Exec(`
-					INSERT INTO platform_credentials (feed_id, organization_id, platform, name)
+					INSERT INTO platform_credentials (organization_id, feed_id, platform, name)
 					VALUES ($1, $2, $3, $4)
 				`,
-					feedID,            // $1: feed_id (VARCHAR) - PRIMARY KEY
-					organizationID,    // $2: organization_id (UUID)
+					organizationID,    // $1: organization_id (UUID)
+					feedID,            // $2: feed_id (UUID)
 					request.ChannelID, // $3: platform (VARCHAR)
 					request.Name,      // $4: name (VARCHAR)
 				)
