@@ -7956,6 +7956,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 			// Connect to a channel
 			channels.POST("/connect", func(c *gin.Context) {
+				log.Printf("=== CHANNEL CONNECT DEBUG START ===")
+
 				var request struct {
 					ChannelID   string                 `json:"channel_id" binding:"required"`
 					Name        string                 `json:"name" binding:"required"`
@@ -7965,9 +7967,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				if err := c.ShouldBindJSON(&request); err != nil {
+					log.Printf("JSON binding error: %v", err)
 					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 					return
 				}
+
+				log.Printf("Request received - ChannelID: %s, Name: %s", request.ChannelID, request.Name)
 
 				// For development: use a default organization ID
 				// In production, this would come from authentication middleware
@@ -7978,6 +7983,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				channelID := fmt.Sprintf("channel_%d", time.Now().Unix())
 
 				// Check if there are any existing feeds to use, or create a new one
+				log.Printf("Checking for existing feeds for organization: %s", organizationID)
 				var existingFeedID string
 				err := db.QueryRow(`
 					SELECT id FROM product_feeds 
@@ -7985,6 +7991,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					ORDER BY created_at DESC 
 					LIMIT 1
 				`, organizationID).Scan(&existingFeedID)
+
+				if err != nil {
+					log.Printf("Error querying product_feeds table: %v", err)
+				} else {
+					log.Printf("Found existing feed ID: %s", existingFeedID)
+				}
 
 				var feedID string
 				if err != nil {
@@ -8023,6 +8035,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				log.Printf("  $4 (name): %s", request.Name)
 
 				// Insert with correct column order - id is auto-generated, feed_id is a separate column
+				log.Printf("Attempting to insert into platform_credentials with:")
+				log.Printf("  organizationID: %s", organizationID)
+				log.Printf("  feedID: %s", feedID)
+				log.Printf("  platform: %s", request.ChannelID)
+				log.Printf("  name: %s", request.Name)
+
 				_, err = db.Exec(`
 					INSERT INTO platform_credentials (organization_id, feed_id, platform, name)
 					VALUES ($1, $2, $3, $4)
@@ -8036,9 +8054,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					log.Printf("Failed to create channel connection: %v", err)
 					log.Printf("SQL Error Details: %+v", err)
+					log.Printf("=== CHANNEL CONNECT DEBUG END (ERROR) ===")
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create channel connection", "details": err.Error()})
 					return
 				}
+
+				log.Printf("Successfully inserted into platform_credentials")
+				log.Printf("=== CHANNEL CONNECT DEBUG END (SUCCESS) ===")
 
 				c.JSON(http.StatusOK, gin.H{
 					"message":    "Channel connected successfully",
