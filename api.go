@@ -7988,12 +7988,30 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 			// Connect to a channel
 			channels.POST("/connect", func(c *gin.Context) {
-				// Ultra-simple version to test basic functionality
+				// Step 1: Test request parsing
+				var request struct {
+					ChannelID   string                 `json:"channel_id" binding:"required"`
+					Name        string                 `json:"name" binding:"required"`
+					Description string                 `json:"description"`
+					Credentials map[string]interface{} `json:"credentials" binding:"required"`
+					Settings    map[string]interface{} `json:"settings"`
+				}
+
+				if err := c.ShouldBindJSON(&request); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Step 2: Test organization ID creation
+				organizationID := getOrCreateOrganizationID()
+
 				c.JSON(http.StatusOK, gin.H{
-					"message":    "Channel connected successfully (simplified)",
-					"channel_id": "test_channel_123",
-					"status":     "connected",
-					"timestamp":  time.Now().Format(time.RFC3339),
+					"message":         "Channel connected successfully (step 2)",
+					"channel_id":      "test_channel_123",
+					"organization_id": organizationID,
+					"request_name":    request.Name,
+					"status":          "connected",
+					"timestamp":       time.Now().Format(time.RFC3339),
 				})
 			})
 
