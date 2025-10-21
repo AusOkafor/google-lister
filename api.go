@@ -8011,16 +8011,20 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				_, err := db.Exec(`
 					INSERT INTO product_feeds (
-						id, organization_id, name, channel, format, status, 
+						oid, organization_id, name, channel, format, status, 
 						products_count, created_at, updated_at
 					) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
 				`, feedID, organizationID, request.Name, request.ChannelID, "xml", "active", 0)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{
-						"error":   "Failed to create feed",
-						"details": err.Error(),
-						"step":    "feed_creation",
+						"error":           "Failed to create feed",
+						"details":         err.Error(),
+						"step":            "feed_creation",
+						"feed_id":         feedID,
+						"organization_id": organizationID,
+						"name":            request.Name,
+						"channel":         request.ChannelID,
 					})
 					return
 				}
