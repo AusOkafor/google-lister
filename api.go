@@ -8152,7 +8152,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			channels.GET("/connected", func(c *gin.Context) {
 				// For development: use a default organization ID
 				// In production, this would come from authentication middleware
-				organizationID := getOrCreateOrganizationID()
+				// organizationID := getOrCreateOrganizationID()
 
 				rows, err := db.Query(`
 					SELECT id, name, type, status, created_at
