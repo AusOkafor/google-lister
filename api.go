@@ -8005,48 +8005,71 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				// Step 2: Test organization ID creation
 				organizationID := getOrCreateOrganizationID()
 
-				// Step 3: Test database operations
-				// First, try to create a simple feed record
-				feedID := uuid.New().String()
+				// Step 3: Create a channel record instead of a feed
+				channelID := uuid.New().String()
 
-				// Map the channel ID to a valid channel name for the constraint
-				var validChannel string
+				// Map the channel ID to a valid channel type for the constraint
+				var channelType string
 				switch request.ChannelID {
 				case "facebook-catalog":
-					validChannel = "Facebook"
+					channelType = "META_CATALOG"
 				case "google-shopping":
-					validChannel = "Google Shopping"
+					channelType = "GOOGLE_MERCHANT_CENTER"
 				case "instagram":
-					validChannel = "Instagram"
+					channelType = "META_CATALOG"
+				case "pinterest":
+					channelType = "PINTEREST_CATALOG"
+				case "tiktok":
+					channelType = "TIKTOK_SHOPPING"
 				default:
-					validChannel = "Other"
+					channelType = "GOOGLE_MERCHANT_CENTER"
 				}
 
-				_, err := db.Exec(`
-					INSERT INTO product_feeds (
-						organization_id, name, channel, format, status, 
-						products_count, connector_id, created_at, updated_at
-					) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-				`, organizationID, request.Name, validChannel, "xml", "active", 0, "default_connector")
-
+				// Create credentials JSON
+				credentialsJSON, err := json.Marshal(request.Credentials)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{
-						"error":           "Failed to create feed",
-						"details":         err.Error(),
-						"step":            "feed_creation",
-						"feed_id":         feedID,
-						"organization_id": organizationID,
-						"name":            request.Name,
-						"channel":         request.ChannelID,
+						"error":   "Failed to marshal credentials",
+						"details": err.Error(),
 					})
 					return
 				}
 
-				// Step 4: Try to insert into platform_credentials
+				// Create config JSON
+				configJSON, err := json.Marshal(request.Settings)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":   "Failed to marshal settings",
+						"details": err.Error(),
+					})
+					return
+				}
+
+				_, err = db.Exec(`
+					INSERT INTO channels (
+						id, name, type, status, config, credentials, 
+						created_at, updated_at
+					) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+				`, channelID, request.Name, channelType, "ACTIVE", string(configJSON), string(credentialsJSON))
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":           "Failed to create channel",
+						"details":         err.Error(),
+						"step":            "channel_creation",
+						"channel_id":      channelID,
+						"organization_id": organizationID,
+						"name":            request.Name,
+						"channel_type":    request.ChannelID,
+					})
+					return
+				}
+
+				// Step 4: Try to insert into platform_credentials for backward compatibility
 				_, err = db.Exec(`
 					INSERT INTO platform_credentials (organization_id, feed_id, platform, name)
 					VALUES ($1, $2, $3, $4)
-				`, organizationID, feedID, request.ChannelID, request.Name)
+				`, organizationID, channelID, request.ChannelID, request.Name)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{
@@ -8058,10 +8081,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				c.JSON(http.StatusOK, gin.H{
-					"message":         "Channel connected successfully (step 4)",
-					"channel_id":      feedID,
+					"message":         "Channel connected successfully",
+					"channel_id":      channelID,
 					"organization_id": organizationID,
-					"feed_id":         feedID,
+					"name":            request.Name,
+					"type":            channelType,
 					"platform":        request.ChannelID,
 					"status":          "connected",
 					"timestamp":       time.Now().Format(time.RFC3339),
