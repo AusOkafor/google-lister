@@ -8012,9 +8012,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				_, err := db.Exec(`
 					INSERT INTO product_feeds (
 						oid, organization_id, name, channel, format, status, 
-						products_count, created_at, updated_at
-					) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-				`, feedID, organizationID, request.Name, request.ChannelID, "xml", "active", 0)
+						products_count, connector_id, created_at, updated_at
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+				`, feedID, organizationID, request.Name, request.ChannelID, "xml", "active", 0, "default_connector")
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{
