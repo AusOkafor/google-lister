@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"fmt"
+	"encoding/json"
 	"net/http"
 
 	"lister/internal/models"
@@ -119,23 +119,44 @@ func (h *ChannelHandler) Connect(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&requestData); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data: " + err.Error()})
+		return
+	}
+
+	// Properly marshal JSON for config and credentials
+	configData := map[string]interface{}{
+		"description":  requestData.Description,
+		"autoSync":     requestData.Settings.AutoSync,
+		"syncInterval": requestData.Settings.SyncInterval,
+		"testMode":     requestData.Settings.TestMode,
+	}
+
+	configJSON, err := json.Marshal(configData)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal config data: " + err.Error()})
+		return
+	}
+
+	credentialsData := map[string]interface{}{
+		"apiKey":     requestData.Credentials.APIKey,
+		"secret":     requestData.Credentials.Secret,
+		"merchantId": requestData.Credentials.MerchantID,
+	}
+
+	credentialsJSON, err := json.Marshal(credentialsData)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal credentials data: " + err.Error()})
 		return
 	}
 
 	// Create or update the channel with the provided credentials
 	channel := models.Channel{
-		ID:   requestData.ChannelID,
-		Name: requestData.Name,
-		Type: models.ChannelTypeGoogleMerchantCenter, // Default type, can be made configurable
-		Status: models.ChannelStatusActive,
-		Config: `{"description": "` + requestData.Description + `", "autoSync": ` + 
-			`"` + fmt.Sprintf("%t", requestData.Settings.AutoSync) + `", "syncInterval": "` + 
-			requestData.Settings.SyncInterval + `", "testMode": "` + 
-			fmt.Sprintf("%t", requestData.Settings.TestMode) + `"}`,
-		Credentials: `{"apiKey": "` + requestData.Credentials.APIKey + 
-			`", "secret": "` + requestData.Credentials.Secret + 
-			`", "merchantId": "` + requestData.Credentials.MerchantID + `"}`,
+		ID:          requestData.ChannelID,
+		Name:        requestData.Name,
+		Type:        models.ChannelTypeGoogleMerchantCenter, // Default type, can be made configurable
+		Status:      models.ChannelStatusActive,
+		Config:      string(configJSON),
+		Credentials: string(credentialsJSON),
 	}
 
 	// Check if channel already exists
@@ -144,11 +165,11 @@ func (h *ChannelHandler) Connect(c *gin.Context) {
 		if err == gorm.ErrRecordNotFound {
 			// Create new channel
 			if err := h.db.Create(&channel).Error; err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create channel connection"})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create channel connection: " + err.Error()})
 				return
 			}
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check channel existence"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check channel existence: " + err.Error()})
 			return
 		}
 	} else {
@@ -157,9 +178,9 @@ func (h *ChannelHandler) Connect(c *gin.Context) {
 		existingChannel.Status = models.ChannelStatusActive
 		existingChannel.Config = channel.Config
 		existingChannel.Credentials = channel.Credentials
-		
+
 		if err := h.db.Save(&existingChannel).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update channel connection"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update channel connection: " + err.Error()})
 			return
 		}
 		channel = existingChannel
