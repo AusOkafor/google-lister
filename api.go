@@ -3491,6 +3491,11 @@ func nullFloat(f float64) interface{} {
 }
 
 func Handler(w http.ResponseWriter, r *http.Request) {
+	log.Printf("=== REQUEST RECEIVED ===")
+	log.Printf("Method: %s", r.Method)
+	log.Printf("URL: %s", r.URL.String())
+	log.Printf("Path: %s", r.URL.Path)
+
 	// Add CORS headers
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -3499,6 +3504,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 	// Handle preflight OPTIONS requests
 	if r.Method == "OPTIONS" {
+		log.Printf("Handling OPTIONS request")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -3553,6 +3559,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 			"status":             "healthy",
 			"database_connected": db != nil,
 			"timestamp":          time.Now().Format(time.RFC3339),
+		})
+	})
+
+	// Simple test endpoint
+	router.GET("/test", func(c *gin.Context) {
+		log.Printf("=== ROOT TEST ENDPOINT HIT ===")
+		c.JSON(http.StatusOK, gin.H{
+			"message":   "Root test endpoint working",
+			"timestamp": time.Now().Format(time.RFC3339),
 		})
 	})
 
@@ -4062,6 +4077,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	// API routes
 	api := router.Group("/api/v1")
 	{
+		// Test endpoint at API level
+		api.GET("/test", func(c *gin.Context) {
+			log.Printf("=== API TEST ENDPOINT HIT ===")
+			c.JSON(http.StatusOK, gin.H{
+				"message":   "API test endpoint working",
+				"timestamp": time.Now().Format(time.RFC3339),
+			})
+		})
 		// Products Management
 		products := api.Group("/products")
 		{
@@ -7951,6 +7974,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				c.JSON(http.StatusOK, gin.H{
 					"data":    availableChannels,
 					"message": "Available channels retrieved successfully",
+				})
+			})
+
+			// Test endpoint to verify function is working
+			channels.GET("/test", func(c *gin.Context) {
+				log.Printf("=== TEST ENDPOINT HIT ===")
+				c.JSON(http.StatusOK, gin.H{
+					"message":   "Channel test endpoint working",
+					"timestamp": time.Now().Format(time.RFC3339),
 				})
 			})
 
