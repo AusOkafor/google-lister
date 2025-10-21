@@ -8129,8 +8129,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				organizationID := getOrCreateOrganizationID()
 
 				rows, err := db.Query(`
-					SELECT feed_id, platform, merchant_id, auto_submit, 
-						   last_submission_at, last_submission_status
+					SELECT feed_id, platform, name
 					FROM platform_credentials 
 					WHERE organization_id = $1
 					ORDER BY created_at DESC
@@ -8145,11 +8144,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				var connectedChannels []map[string]interface{}
 				for rows.Next() {
-					var feedID, platform, merchantID, lastSubmissionStatus string
-					var autoSubmit bool
-					var lastSubmissionAt sql.NullTime
+					var feedID, platform, name string
 
-					err := rows.Scan(&feedID, &platform, &merchantID, &autoSubmit, &lastSubmissionAt, &lastSubmissionStatus)
+					err := rows.Scan(&feedID, &platform, &name)
 					if err != nil {
 						log.Printf("Error scanning channel: %v", err)
 						continue
@@ -8157,23 +8154,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 					// Get channel info
 					channelInfo := map[string]interface{}{
-						"id":          feedID,
-						"platform":    platform,
-						"name":        getChannelName(platform),
-						"description": getChannelDescription(platform),
-						"logo":        getChannelLogo(platform),
-						"status":      "connected",
-						"merchant_id": merchantID,
-						"auto_submit": autoSubmit,
-						"last_submission_at": func() string {
-							if lastSubmissionAt.Valid {
-								return lastSubmissionAt.Time.Format(time.RFC3339)
-							}
-							return ""
-						}(),
-						"last_submission_status": lastSubmissionStatus,
-						"products_exported":      150, // Mock data
-						"success_rate":           98,  // Mock data
+						"id":                feedID,
+						"platform":          platform,
+						"name":              name,
+						"description":       getChannelDescription(platform),
+						"logo":              getChannelLogo(platform),
+						"status":            "connected",
+						"products_exported": 150, // Mock data
+						"success_rate":      98,  // Mock data
 					}
 
 					// Config data removed for now - will be added back when table schema is fixed
