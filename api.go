@@ -1245,6 +1245,74 @@ func initDB() error {
 		`CREATE INDEX IF NOT EXISTS idx_product_feeds_channel ON product_feeds(channel);`,
 		`CREATE INDEX IF NOT EXISTS idx_platform_credentials_organization_id ON platform_credentials(organization_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_platform_credentials_platform ON platform_credentials(platform);`,
+
+		// Export tracking tables
+		`CREATE TABLE IF NOT EXISTS export_history (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			channel_id VARCHAR(255) NOT NULL,
+			organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000000'::uuid,
+			status VARCHAR(50) NOT NULL DEFAULT 'pending',
+			format VARCHAR(50) DEFAULT 'xml',
+			products_count INTEGER DEFAULT 0,
+			file_size INTEGER DEFAULT 0,
+			file_path VARCHAR(500),
+			error_message TEXT,
+			processing_time_ms INTEGER DEFAULT 0,
+			started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			completed_at TIMESTAMP WITH TIME ZONE,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		);`,
+
+		`CREATE TABLE IF NOT EXISTS export_analytics (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			channel_id VARCHAR(255) NOT NULL,
+			organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000000'::uuid,
+			date DATE NOT NULL DEFAULT CURRENT_DATE,
+			total_exports INTEGER DEFAULT 0,
+			successful_exports INTEGER DEFAULT 0,
+			failed_exports INTEGER DEFAULT 0,
+			total_products_exported INTEGER DEFAULT 0,
+			average_processing_time_ms INTEGER DEFAULT 0,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		);`,
+
+		`CREATE TABLE IF NOT EXISTS export_schedules (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			channel_id VARCHAR(255) NOT NULL,
+			organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000000'::uuid,
+			name VARCHAR(255) NOT NULL,
+			schedule_type VARCHAR(50) NOT NULL, -- daily, weekly, monthly
+			schedule_config JSONB DEFAULT '{}',
+			timezone VARCHAR(100) DEFAULT 'UTC',
+			is_active BOOLEAN DEFAULT TRUE,
+			last_run_at TIMESTAMP WITH TIME ZONE,
+			next_run_at TIMESTAMP WITH TIME ZONE,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		);`,
+
+		`CREATE TABLE IF NOT EXISTS export_validation_rules (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			channel_id VARCHAR(255) NOT NULL,
+			organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000000'::uuid,
+			rule_name VARCHAR(255) NOT NULL,
+			rule_type VARCHAR(100) NOT NULL, -- required_field, format_check, data_validation
+			rule_config JSONB DEFAULT '{}',
+			is_active BOOLEAN DEFAULT TRUE,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		);`,
+
+		// Indexes for export tables
+		`CREATE INDEX IF NOT EXISTS idx_export_history_channel_id ON export_history(channel_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_export_history_status ON export_history(status);`,
+		`CREATE INDEX IF NOT EXISTS idx_export_history_created_at ON export_history(created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_export_analytics_channel_id ON export_analytics(channel_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_export_analytics_date ON export_analytics(date);`,
+		`CREATE INDEX IF NOT EXISTS idx_export_schedules_channel_id ON export_schedules(channel_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_export_schedules_active ON export_schedules(is_active);`,
+		`CREATE INDEX IF NOT EXISTS idx_export_validation_rules_channel_id ON export_validation_rules(channel_id);`,
 	}
 
 	// Execute all table creation statements
@@ -8240,6 +8308,548 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				}
 
 				c.JSON(http.StatusOK, gin.H{"message": "Channel disconnected successfully"})
+			})
+
+			// Export Now - Trigger immediate export for a channel
+			channels.POST("/:id/export", func(c *gin.Context) {
+				channelID := c.Param("id")
+				organizationID := getOrCreateOrganizationID()
+
+				// Get channel details
+				var channelName, channelType string
+				err := db.QueryRow(`
+					SELECT name, type FROM channels WHERE id = $1
+				`, channelID).Scan(&channelName, &channelType)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
+					return
+				}
+
+				// Create export history record
+				exportID := uuid.New().String()
+				startTime := time.Now()
+
+				_, err = db.Exec(`
+					INSERT INTO export_history (
+						id, channel_id, organization_id, status, format, 
+						started_at, created_at
+					) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+				`, exportID, channelID, organizationID, "processing", "xml", startTime)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":   "Failed to create export record",
+						"details": err.Error(),
+					})
+					return
+				}
+
+				// Simulate export processing (in real implementation, this would be async)
+				go func() {
+					// Simulate processing time
+					time.Sleep(2 * time.Second)
+
+					// Mock export data
+					productsCount := 150
+					fileSize := 2048000 // 2MB
+					processingTime := int(time.Since(startTime).Milliseconds())
+
+					// Update export record with success
+					_, err := db.Exec(`
+						UPDATE export_history SET 
+							status = $1, products_count = $2, file_size = $3, 
+							processing_time_ms = $4, completed_at = NOW()
+						WHERE id = $5
+					`, "completed", productsCount, fileSize, processingTime, exportID)
+
+					if err != nil {
+						log.Printf("Failed to update export record: %v", err)
+					}
+
+					// Update analytics
+					_, err = db.Exec(`
+						INSERT INTO export_analytics (
+							channel_id, organization_id, date, total_exports, 
+							successful_exports, total_products_exported, 
+							average_processing_time_ms, created_at, updated_at
+						) VALUES ($1, $2, CURRENT_DATE, 1, 1, $3, $4, NOW(), NOW())
+						ON CONFLICT (channel_id, organization_id, date) 
+						DO UPDATE SET 
+							total_exports = export_analytics.total_exports + 1,
+							successful_exports = export_analytics.successful_exports + 1,
+							total_products_exported = export_analytics.total_products_exported + $3,
+							average_processing_time_ms = (
+								(export_analytics.average_processing_time_ms * export_analytics.successful_exports + $4) / 
+								(export_analytics.successful_exports + 1)
+							),
+							updated_at = NOW()
+					`, channelID, organizationID, productsCount, processingTime)
+
+					if err != nil {
+						log.Printf("Failed to update analytics: %v", err)
+					}
+				}()
+
+				c.JSON(http.StatusOK, gin.H{
+					"message":              "Export started successfully",
+					"export_id":            exportID,
+					"channel_id":           channelID,
+					"status":               "processing",
+					"estimated_completion": "2-5 minutes",
+				})
+			})
+
+			// Get export history for a channel
+			channels.GET("/:id/exports", func(c *gin.Context) {
+				channelID := c.Param("id")
+				organizationID := getOrCreateOrganizationID()
+
+				rows, err := db.Query(`
+					SELECT id, status, format, products_count, file_size, 
+					       processing_time_ms, started_at, completed_at, error_message
+					FROM export_history 
+					WHERE channel_id = $1 AND organization_id = $2
+					ORDER BY started_at DESC
+					LIMIT 50
+				`, channelID, organizationID)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":   "Failed to fetch export history",
+						"details": err.Error(),
+					})
+					return
+				}
+				defer rows.Close()
+
+				var exports []map[string]interface{}
+				for rows.Next() {
+					var id, status, format string
+					var productsCount, fileSize, processingTime *int
+					var startedAt, completedAt *string
+					var errorMessage *string
+
+					err := rows.Scan(&id, &status, &format, &productsCount, &fileSize,
+						&processingTime, &startedAt, &completedAt, &errorMessage)
+					if err != nil {
+						continue
+					}
+
+					export := map[string]interface{}{
+						"id":                 id,
+						"status":             status,
+						"format":             format,
+						"products_count":     productsCount,
+						"file_size":          fileSize,
+						"processing_time_ms": processingTime,
+						"started_at":         startedAt,
+						"completed_at":       completedAt,
+						"error_message":      errorMessage,
+					}
+					exports = append(exports, export)
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":    exports,
+					"message": "Export history retrieved successfully",
+				})
+			})
+
+			// Get export analytics for a channel
+			channels.GET("/:id/analytics", func(c *gin.Context) {
+				channelID := c.Param("id")
+				organizationID := getOrCreateOrganizationID()
+
+				// Get analytics for the last 30 days
+				rows, err := db.Query(`
+					SELECT date, total_exports, successful_exports, failed_exports,
+					       total_products_exported, average_processing_time_ms
+					FROM export_analytics 
+					WHERE channel_id = $1 AND organization_id = $2
+					AND date >= CURRENT_DATE - INTERVAL '30 days'
+					ORDER BY date DESC
+				`, channelID, organizationID)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":   "Failed to fetch analytics",
+						"details": err.Error(),
+					})
+					return
+				}
+				defer rows.Close()
+
+				var analytics []map[string]interface{}
+				totalExports := 0
+				totalSuccessful := 0
+				totalFailed := 0
+				totalProducts := 0
+
+				for rows.Next() {
+					var date string
+					var exports, successful, failed, products, avgTime *int
+
+					err := rows.Scan(&date, &exports, &successful, &failed, &products, &avgTime)
+					if err != nil {
+						continue
+					}
+
+					if exports != nil {
+						totalExports += *exports
+					}
+					if successful != nil {
+						totalSuccessful += *successful
+					}
+					if failed != nil {
+						totalFailed += *failed
+					}
+					if products != nil {
+						totalProducts += *products
+					}
+
+					analytics = append(analytics, map[string]interface{}{
+						"date":                       date,
+						"total_exports":              exports,
+						"successful_exports":         successful,
+						"failed_exports":             failed,
+						"total_products_exported":    products,
+						"average_processing_time_ms": avgTime,
+					})
+				}
+
+				successRate := 0.0
+				if totalExports > 0 {
+					successRate = float64(totalSuccessful) / float64(totalExports) * 100
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data": analytics,
+					"summary": map[string]interface{}{
+						"total_exports":           totalExports,
+						"successful_exports":      totalSuccessful,
+						"failed_exports":          totalFailed,
+						"success_rate":            successRate,
+						"total_products_exported": totalProducts,
+					},
+					"message": "Analytics retrieved successfully",
+				})
+			})
+
+			// Get export preview for a channel
+			channels.GET("/:id/preview", func(c *gin.Context) {
+				channelID := c.Param("id")
+				// organizationID := getOrCreateOrganizationID()
+
+				// Get channel details
+				var channelName, channelType string
+				err := db.QueryRow(`
+					SELECT name, type FROM channels WHERE id = $1
+				`, channelID).Scan(&channelName, &channelType)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
+					return
+				}
+
+				// Mock preview data
+				previewData := map[string]interface{}{
+					"channel_id":     channelID,
+					"channel_name":   channelName,
+					"format":         "XML",
+					"total_products": 150,
+					"preview_products": []map[string]interface{}{
+						{
+							"id":           "PROD001",
+							"title":        "Premium Cotton T-Shirt",
+							"price":        29.99,
+							"description":  "High-quality cotton t-shirt",
+							"category":     "Clothing",
+							"availability": "in_stock",
+						},
+						{
+							"id":           "PROD002",
+							"title":        "Wireless Bluetooth Headphones",
+							"price":        89.99,
+							"description":  "Premium wireless headphones",
+							"category":     "Electronics",
+							"availability": "in_stock",
+						},
+						{
+							"id":           "PROD003",
+							"title":        "Organic Coffee Beans",
+							"price":        24.99,
+							"description":  "Premium organic coffee beans",
+							"category":     "Food & Beverage",
+							"availability": "in_stock",
+						},
+					},
+					"field_mappings": map[string]interface{}{
+						"title":        "product_name",
+						"price":        "price",
+						"description":  "description",
+						"category":     "product_type",
+						"availability": "availability",
+					},
+					"validation_results": map[string]interface{}{
+						"total_products":   150,
+						"valid_products":   147,
+						"invalid_products": 3,
+						"issues": []map[string]interface{}{
+							{
+								"product_id": "PROD045",
+								"issue":      "Missing required field: price",
+								"severity":   "error",
+							},
+							{
+								"product_id": "PROD089",
+								"issue":      "Invalid category format",
+								"severity":   "warning",
+							},
+						},
+					},
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":    previewData,
+					"message": "Export preview generated successfully",
+				})
+			})
+
+			// Download export file
+			channels.GET("/:id/download/:exportId", func(c *gin.Context) {
+				channelID := c.Param("id")
+				exportID := c.Param("exportId")
+				organizationID := getOrCreateOrganizationID()
+
+				// Get export details
+				var filePath, status string
+				err := db.QueryRow(`
+					SELECT file_path, status FROM export_history 
+					WHERE id = $1 AND channel_id = $2 AND organization_id = $3
+				`, exportID, channelID, organizationID).Scan(&filePath, &status)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Export file not found"})
+					return
+				}
+
+				if status != "completed" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Export not completed yet"})
+					return
+				}
+
+				// Generate mock XML content for download
+				xmlContent := `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:g="http://base.google.com/ns/1.0" version="2.0">
+  <channel>
+    <title>Product Feed Export</title>
+    <description>Generated product feed</description>
+    <link>https://example.com</link>
+    <item>
+      <g:id>PROD001</g:id>
+      <g:title>Premium Cotton T-Shirt</g:title>
+      <g:description>High-quality cotton t-shirt</g:description>
+      <g:price>29.99 USD</g:price>
+      <g:availability>in stock</g:availability>
+      <g:condition>new</g:condition>
+      <g:product_type>Clothing</g:product_type>
+    </item>
+    <item>
+      <g:id>PROD002</g:id>
+      <g:title>Wireless Bluetooth Headphones</g:title>
+      <g:description>Premium wireless headphones</g:description>
+      <g:price>89.99 USD</g:price>
+      <g:availability>in stock</g:availability>
+      <g:condition>new</g:condition>
+      <g:product_type>Electronics</g:product_type>
+    </item>
+  </channel>
+</rss>`
+
+				c.Header("Content-Type", "application/xml")
+				c.Header("Content-Disposition", "attachment; filename=product_feed_"+exportID+".xml")
+				c.String(http.StatusOK, xmlContent)
+			})
+
+			// Update channel settings
+			channels.PUT("/:id/settings", func(c *gin.Context) {
+				channelID := c.Param("id")
+				// organizationID := getOrCreateOrganizationID()
+
+				var request struct {
+					Name        string                 `json:"name"`
+					Description string                 `json:"description"`
+					Credentials map[string]interface{} `json:"credentials"`
+					Settings    map[string]interface{} `json:"settings"`
+				}
+
+				if err := c.ShouldBindJSON(&request); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+					return
+				}
+
+				// Update channel settings
+				credentialsJSON, _ := json.Marshal(request.Credentials)
+				settingsJSON, _ := json.Marshal(request.Settings)
+
+				_, err := db.Exec(`
+					UPDATE channels SET 
+						name = $1, config = $2, credentials = $3, updated_at = NOW()
+					WHERE id = $4
+				`, request.Name, string(settingsJSON), string(credentialsJSON), channelID)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":   "Failed to update channel settings",
+						"details": err.Error(),
+					})
+					return
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"message":    "Channel settings updated successfully",
+					"channel_id": channelID,
+				})
+			})
+
+			// Get channel settings
+			channels.GET("/:id/settings", func(c *gin.Context) {
+				channelID := c.Param("id")
+				// organizationID := getOrCreateOrganizationID()
+
+				var name, channelType, config, credentials string
+				err := db.QueryRow(`
+					SELECT name, type, config, credentials FROM channels 
+					WHERE id = $1
+				`, channelID).Scan(&name, &channelType, &config, &credentials)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
+					return
+				}
+
+				// Parse JSON fields
+				var configData, credentialsData map[string]interface{}
+				json.Unmarshal([]byte(config), &configData)
+				json.Unmarshal([]byte(credentials), &credentialsData)
+
+				settings := map[string]interface{}{
+					"name":        name,
+					"type":        channelType,
+					"config":      configData,
+					"credentials": credentialsData,
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":    settings,
+					"message": "Channel settings retrieved successfully",
+				})
+			})
+
+			// Get validation rules for a channel
+			channels.GET("/:id/validation", func(c *gin.Context) {
+				channelID := c.Param("id")
+				organizationID := getOrCreateOrganizationID()
+
+				rows, err := db.Query(`
+					SELECT id, rule_name, rule_type, rule_config, is_active
+					FROM export_validation_rules 
+					WHERE channel_id = $1 AND organization_id = $2
+					ORDER BY created_at DESC
+				`, channelID, organizationID)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":   "Failed to fetch validation rules",
+						"details": err.Error(),
+					})
+					return
+				}
+				defer rows.Close()
+
+				var rules []map[string]interface{}
+				for rows.Next() {
+					var id, ruleName, ruleType string
+					var ruleConfig string
+					var isActive bool
+
+					err := rows.Scan(&id, &ruleName, &ruleType, &ruleConfig, &isActive)
+					if err != nil {
+						continue
+					}
+
+					var configData map[string]interface{}
+					json.Unmarshal([]byte(ruleConfig), &configData)
+
+					rules = append(rules, map[string]interface{}{
+						"id":          id,
+						"rule_name":   ruleName,
+						"rule_type":   ruleType,
+						"rule_config": configData,
+						"is_active":   isActive,
+					})
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":    rules,
+					"message": "Validation rules retrieved successfully",
+				})
+			})
+
+			// Get schedules for a channel
+			channels.GET("/:id/schedules", func(c *gin.Context) {
+				channelID := c.Param("id")
+				organizationID := getOrCreateOrganizationID()
+
+				rows, err := db.Query(`
+					SELECT id, name, schedule_type, schedule_config, timezone, 
+					       is_active, last_run_at, next_run_at
+					FROM export_schedules 
+					WHERE channel_id = $1 AND organization_id = $2
+					ORDER BY created_at DESC
+				`, channelID, organizationID)
+
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":   "Failed to fetch schedules",
+						"details": err.Error(),
+					})
+					return
+				}
+				defer rows.Close()
+
+				var schedules []map[string]interface{}
+				for rows.Next() {
+					var id, name, scheduleType, scheduleConfig, timezone string
+					var isActive bool
+					var lastRunAt, nextRunAt *string
+
+					err := rows.Scan(&id, &name, &scheduleType, &scheduleConfig,
+						&timezone, &isActive, &lastRunAt, &nextRunAt)
+					if err != nil {
+						continue
+					}
+
+					var configData map[string]interface{}
+					json.Unmarshal([]byte(scheduleConfig), &configData)
+
+					schedules = append(schedules, map[string]interface{}{
+						"id":              id,
+						"name":            name,
+						"schedule_type":   scheduleType,
+						"schedule_config": configData,
+						"timezone":        timezone,
+						"is_active":       isActive,
+						"last_run_at":     lastRunAt,
+						"next_run_at":     nextRunAt,
+					})
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"data":    schedules,
+					"message": "Schedules retrieved successfully",
+				})
 			})
 		}
 
