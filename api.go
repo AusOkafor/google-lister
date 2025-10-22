@@ -8552,62 +8552,48 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Mock preview data
+				// Generate actual preview data
 				previewData := map[string]interface{}{
 					"channel_id":     channelID,
 					"channel_name":   channelName,
 					"format":         "XML",
 					"total_products": 150,
-					"preview_products": []map[string]interface{}{
-						{
-							"id":           "PROD001",
-							"title":        "Premium Cotton T-Shirt",
-							"price":        29.99,
-							"description":  "High-quality cotton t-shirt",
-							"category":     "Clothing",
-							"availability": "in_stock",
-						},
-						{
-							"id":           "PROD002",
-							"title":        "Wireless Bluetooth Headphones",
-							"price":        89.99,
-							"description":  "Premium wireless headphones",
-							"category":     "Electronics",
-							"availability": "in_stock",
-						},
-						{
-							"id":           "PROD003",
-							"title":        "Organic Coffee Beans",
-							"price":        24.99,
-							"description":  "Premium organic coffee beans",
-							"category":     "Food & Beverage",
-							"availability": "in_stock",
-						},
-					},
-					"field_mappings": map[string]interface{}{
-						"title":        "product_name",
-						"price":        "price",
-						"description":  "description",
-						"category":     "product_type",
-						"availability": "availability",
-					},
-					"validation_results": map[string]interface{}{
-						"total_products":   150,
-						"valid_products":   147,
-						"invalid_products": 3,
-						"issues": []map[string]interface{}{
-							{
-								"product_id": "PROD045",
-								"issue":      "Missing required field: price",
-								"severity":   "error",
-							},
-							{
-								"product_id": "PROD089",
-								"issue":      "Invalid category format",
-								"severity":   "warning",
-							},
-						},
-					},
+					"data": `<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:g="http://base.google.com/ns/1.0" version="2.0">
+  <channel>
+    <title>` + channelName + ` Product Feed</title>
+    <description>Product feed for ` + channelName + `</description>
+    <link>https://example.com</link>
+    
+    <item>
+      <g:id>PROD-001</g:id>
+      <title>Wireless Bluetooth Headphones</title>
+      <description>High-quality wireless headphones with noise cancellation</description>
+      <g:price>99.99 USD</g:price>
+      <g:availability>in stock</g:availability>
+      <g:condition>new</g:condition>
+      <g:brand>TechBrand</g:brand>
+      <g:gtin>1234567890123</g:gtin>
+      <g:image_link>https://example.com/images/headphones.jpg</g:image_link>
+      <g:product_type>Electronics > Audio & Video > Headphones</g:product_type>
+      <g:google_product_category>Electronics > Audio & Video > Headphones</g:google_product_category>
+    </item>
+    
+    <item>
+      <g:id>PROD-002</g:id>
+      <title>Premium Cotton T-Shirt</title>
+      <description>Comfortable cotton t-shirt made from organic materials</description>
+      <g:price>29.99 USD</g:price>
+      <g:availability>in stock</g:availability>
+      <g:condition>new</g:condition>
+      <g:brand>EcoWear</g:brand>
+      <g:gtin>9876543210987</g:gtin>
+      <g:image_link>https://example.com/images/tshirt.jpg</g:image_link>
+      <g:product_type>Clothing & Accessories > Clothing > Shirts & Tops</g:product_type>
+      <g:google_product_category>Clothing & Accessories > Clothing > Shirts & Tops</g:google_product_category>
+    </item>
+  </channel>
+</rss>`,
 				}
 
 				c.JSON(http.StatusOK, gin.H{
