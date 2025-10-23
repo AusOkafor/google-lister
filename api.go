@@ -8429,7 +8429,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					SELECT id, status, format, products_count, file_size, 
 					       processing_time_ms, started_at, completed_at, error_message
 					FROM export_history 
-					WHERE channel = $1 AND organization_id = $2
+					WHERE channel_id = $1 AND organization_id = $2
 					ORDER BY started_at DESC
 					LIMIT 50
 				`, channelID, organizationID)
@@ -8544,7 +8544,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					SELECT date, total_exports, successful_exports, failed_exports,
 					       total_products_exported, average_processing_time_ms
 					FROM export_analytics 
-					WHERE channel = $1 AND organization_id = $2
+					WHERE channel_id = $1 AND organization_id = $2
 					AND date >= CURRENT_DATE - INTERVAL '30 days'
 					ORDER BY date DESC
 				`, channelID, organizationID)
@@ -8933,7 +8933,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					SELECT id, name, schedule_type, schedule_config, timezone, 
 					       is_active, last_run_at, next_run_at
 					FROM export_schedules 
-					WHERE channel = $1 AND organization_id = $2
+					WHERE channel_id = $1 AND organization_id = $2
 					ORDER BY created_at DESC
 				`, channelID, organizationID)
 
