@@ -8326,6 +8326,23 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
+				// Get real feed data for this channel first
+				var feedName, feedFormat string
+				var feedProductCount int
+				err = db.QueryRow(`
+					SELECT name, format, products_count 
+					FROM product_feeds 
+					WHERE (channel = $1 OR channel ILIKE '%' || $1 || '%' OR $1 ILIKE '%' || channel || '%')
+					AND organization_id = $2
+					ORDER BY created_at DESC LIMIT 1
+				`, channelName, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
+
+				// Use real feed format or fallback to xml
+				exportFormat := feedFormat
+				if exportFormat == "" {
+					exportFormat = "xml"
+				}
+
 				// Create export history record
 				exportID := uuid.New().String()
 				startTime := time.Now()
@@ -8335,7 +8352,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						id, channel_id, organization_id, status, format, 
 						started_at, created_at
 					) VALUES ($1, $2, $3, $4, $5, $6, NOW())
-				`, exportID, channelID, organizationID, "processing", "xml", startTime)
+				`, exportID, channelID, organizationID, "processing", exportFormat, startTime)
 
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{
@@ -8345,15 +8362,18 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
+				// Use real feed data or fallback to defaults
+				productsCount := feedProductCount
+				if productsCount == 0 {
+					productsCount = 150 // Fallback
+				}
+				fileSize := productsCount * 1024 // Estimate file size based on product count
+				processingTime := int(time.Since(startTime).Milliseconds())
+
 				// Simulate export processing (in real implementation, this would be async)
 				go func() {
 					// Simulate processing time
 					time.Sleep(2 * time.Second)
-
-					// Mock export data
-					productsCount := 150
-					fileSize := 2048000 // 2MB
-					processingTime := int(time.Since(startTime).Milliseconds())
 
 					// Update export record with success
 					_, err := db.Exec(`
