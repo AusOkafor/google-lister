@@ -8450,6 +8450,63 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					exports = append(exports, export)
 				}
 
+				// If no export history exists, return feed-based information
+				if len(exports) == 0 {
+					// Get channel details
+					var channelName, channelType string
+					err := db.QueryRow(`
+						SELECT name, type FROM channels WHERE id = $1
+					`, channelID).Scan(&channelName, &channelType)
+
+					if err != nil {
+						c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
+						return
+					}
+
+					// Get feed information for this channel
+					var feedName, feedFormat string
+					var feedProductCount int
+					err = db.QueryRow(`
+						SELECT name, format, products_count 
+						FROM product_feeds 
+						WHERE channel_id = $1 AND organization_id = $2
+						ORDER BY created_at DESC LIMIT 1
+					`, channelID, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
+
+					if err != nil {
+						// No feed data, return empty history
+						c.JSON(http.StatusOK, gin.H{
+							"data":    []map[string]interface{}{},
+							"message": "No export history available",
+						})
+						return
+					}
+
+					// Return feed-based history
+					feedBasedHistory := []map[string]interface{}{
+						{
+							"id":                 "feed-ready",
+							"status":             "ready",
+							"format":             feedFormat,
+							"products_count":     feedProductCount,
+							"file_size":          0,
+							"processing_time_ms": 0,
+							"started_at":         nil,
+							"completed_at":       nil,
+							"error_message":      nil,
+							"feed_name":          feedName,
+							"channel_name":       channelName,
+							"message":            fmt.Sprintf("Feed '%s' ready for export with %d products", feedName, feedProductCount),
+						},
+					}
+
+					c.JSON(http.StatusOK, gin.H{
+						"data":    feedBasedHistory,
+						"message": "Feed ready for export - no exports yet",
+					})
+					return
+				}
+
 				c.JSON(http.StatusOK, gin.H{
 					"data":    exports,
 					"message": "Export history retrieved successfully",
@@ -8516,6 +8573,68 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"total_products_exported":    products,
 						"average_processing_time_ms": avgTime,
 					})
+				}
+
+				// If no analytics data exists, return feed-based information
+				if totalExports == 0 {
+					// Get channel details
+					var channelName, channelType string
+					err := db.QueryRow(`
+						SELECT name, type FROM channels WHERE id = $1
+					`, channelID).Scan(&channelName, &channelType)
+
+					if err != nil {
+						c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
+						return
+					}
+
+					// Get feed information for this channel
+					var feedName, feedFormat string
+					var feedProductCount int
+					err = db.QueryRow(`
+						SELECT name, format, products_count 
+						FROM product_feeds 
+						WHERE channel_id = $1 AND organization_id = $2
+						ORDER BY created_at DESC LIMIT 1
+					`, channelID, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
+
+					if err != nil {
+						// No feed data, return empty analytics
+						c.JSON(http.StatusOK, gin.H{
+							"data": []map[string]interface{}{},
+							"summary": map[string]interface{}{
+								"total_exports":           0,
+								"successful_exports":      0,
+								"failed_exports":          0,
+								"success_rate":            0.0,
+								"total_products_exported": 0,
+								"feed_name":               "No feed selected",
+								"feed_format":             "N/A",
+								"feed_product_count":      0,
+							},
+							"message": "No analytics data available",
+						})
+						return
+					}
+
+					// Return feed-based analytics
+					c.JSON(http.StatusOK, gin.H{
+						"data": []map[string]interface{}{},
+						"summary": map[string]interface{}{
+							"total_exports":           0,
+							"successful_exports":      0,
+							"failed_exports":          0,
+							"success_rate":            0.0,
+							"total_products_exported": 0,
+							"feed_name":               feedName,
+							"feed_format":             feedFormat,
+							"feed_product_count":      feedProductCount,
+							"channel_name":            channelName,
+							"channel_type":            channelType,
+						},
+						"message": "Feed ready for export - no exports yet",
+					})
+					return
 				}
 
 				successRate := 0.0
@@ -8830,6 +8949,64 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"last_run_at":     lastRunAt,
 						"next_run_at":     nextRunAt,
 					})
+				}
+
+				// If no schedules exist, return feed-based information
+				if len(schedules) == 0 {
+					// Get channel details
+					var channelName, channelType string
+					err := db.QueryRow(`
+						SELECT name, type FROM channels WHERE id = $1
+					`, channelID).Scan(&channelName, &channelType)
+
+					if err != nil {
+						c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
+						return
+					}
+
+					// Get feed information for this channel
+					var feedName, feedFormat string
+					var feedProductCount int
+					err = db.QueryRow(`
+						SELECT name, format, products_count 
+						FROM product_feeds 
+						WHERE channel_id = $1 AND organization_id = $2
+						ORDER BY created_at DESC LIMIT 1
+					`, channelID, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
+
+					if err != nil {
+						// No feed data, return empty schedules
+						c.JSON(http.StatusOK, gin.H{
+							"data":    []map[string]interface{}{},
+							"message": "No schedules available",
+						})
+						return
+					}
+
+					// Return feed-based schedule
+					feedBasedSchedule := []map[string]interface{}{
+						{
+							"id":                 "feed-ready",
+							"name":               fmt.Sprintf("Export %s", feedName),
+							"schedule_type":      "manual",
+							"schedule_config":    map[string]interface{}{},
+							"timezone":           "UTC",
+							"is_active":          true,
+							"last_run_at":        nil,
+							"next_run_at":        nil,
+							"feed_name":          feedName,
+							"feed_format":        feedFormat,
+							"feed_product_count": feedProductCount,
+							"channel_name":       channelName,
+							"message":            fmt.Sprintf("Feed '%s' ready for export with %d products", feedName, feedProductCount),
+						},
+					}
+
+					c.JSON(http.StatusOK, gin.H{
+						"data":    feedBasedSchedule,
+						"message": "Feed ready for export - no schedules yet",
+					})
+					return
 				}
 
 				c.JSON(http.StatusOK, gin.H{
