@@ -8469,7 +8469,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					err = db.QueryRow(`
 						SELECT name, format, products_count 
 						FROM product_feeds 
-						WHERE channel = $1 AND organization_id = $2
+						WHERE (channel = $1 OR channel ILIKE '%' || $1 || '%' OR $1 ILIKE '%' || channel || '%')
+						AND organization_id = $2
 						ORDER BY created_at DESC LIMIT 1
 					`, channelName, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
 
@@ -8594,7 +8595,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					err = db.QueryRow(`
 						SELECT name, format, products_count 
 						FROM product_feeds 
-						WHERE channel = $1 AND organization_id = $2
+						WHERE (channel = $1 OR channel ILIKE '%' || $1 || '%' OR $1 ILIKE '%' || channel || '%')
+						AND organization_id = $2
 						ORDER BY created_at DESC LIMIT 1
 					`, channelName, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
 
@@ -8970,7 +8972,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					err = db.QueryRow(`
 						SELECT name, format, products_count 
 						FROM product_feeds 
-						WHERE channel = $1 AND organization_id = $2
+						WHERE (channel = $1 OR channel ILIKE '%' || $1 || '%' OR $1 ILIKE '%' || channel || '%')
+						AND organization_id = $2
 						ORDER BY created_at DESC LIMIT 1
 					`, channelName, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
 
