@@ -1303,6 +1303,23 @@ func initDB() error {
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 		);`,
+		`CREATE TABLE IF NOT EXISTS export_products (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			export_id UUID NOT NULL,
+			channel_id VARCHAR(255) NOT NULL,
+			organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000000'::uuid,
+			product_id VARCHAR(255) NOT NULL,
+			product_title VARCHAR(500),
+			product_sku VARCHAR(255),
+			product_price DECIMAL(10,2),
+			product_currency VARCHAR(10),
+			product_brand VARCHAR(255),
+			product_category VARCHAR(255),
+			product_status VARCHAR(50),
+			export_status VARCHAR(50) DEFAULT 'exported',
+			created_at TIMESTAMP DEFAULT NOW(),
+			FOREIGN KEY (export_id) REFERENCES export_history(id) ON DELETE CASCADE
+		);`,
 
 		// Indexes for export tables
 		`CREATE INDEX IF NOT EXISTS idx_export_history_channel_id ON export_history(channel_id);`,
@@ -1313,6 +1330,8 @@ func initDB() error {
 		`CREATE INDEX IF NOT EXISTS idx_export_schedules_channel_id ON export_schedules(channel_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_export_schedules_active ON export_schedules(is_active);`,
 		`CREATE INDEX IF NOT EXISTS idx_export_validation_rules_channel_id ON export_validation_rules(channel_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_export_products_export_id ON export_products(export_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_export_products_channel_id ON export_products(channel_id);`,
 	}
 
 	// Execute all table creation statements
@@ -8494,6 +8513,53 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					} else {
 						log.Printf("📊 [EXPORT DEBUG] Analytics updated successfully for channel %s", channelID)
 					}
+
+					// Store the actual exported products
+					log.Printf("📦 [EXPORT DEBUG] Storing exported products for export %s", exportID)
+
+					// Get products from the feed that was used for this export
+					productRows, err := db.Query(`
+						SELECT external_id, title, price, currency, sku, brand, category, status
+						FROM products 
+						WHERE organization_id = $1 AND status = 'ACTIVE'
+						ORDER BY created_at DESC
+						LIMIT $2
+					`, organizationID, productsCount)
+
+					if err == nil {
+						defer productRows.Close()
+						productCount := 0
+
+						for productRows.Next() {
+							var externalID, title, currency, sku, brand, category, status string
+							var price float64
+
+							err := productRows.Scan(&externalID, &title, &price, &currency, &sku, &brand, &category, &status)
+							if err != nil {
+								continue
+							}
+
+							// Insert each product into export_products table
+							_, err = db.Exec(`
+								INSERT INTO export_products (
+									export_id, channel_id, organization_id, product_id,
+									product_title, product_sku, product_price, product_currency,
+									product_brand, product_category, product_status, export_status
+								) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+							`, exportID, channelID, organizationID, externalID,
+								title, sku, price, currency, brand, category, status, "exported")
+
+							if err != nil {
+								log.Printf("❌ [EXPORT DEBUG] Failed to store product %s: %v", externalID, err)
+							} else {
+								productCount++
+							}
+						}
+
+						log.Printf("✅ [EXPORT DEBUG] Stored %d products for export %s", productCount, exportID)
+					} else {
+						log.Printf("❌ [EXPORT DEBUG] Failed to query products: %v", err)
+					}
 				}()
 
 				c.JSON(http.StatusOK, gin.H{
@@ -8808,30 +8874,29 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					ORDER BY created_at DESC LIMIT 1
 				`, channelID, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
 
-				// Get sample products that would have been exported
-				// In a real implementation, this would get the actual products from the export
+				// Get the actual exported products for this specific export
 				rows, err := db.Query(`
-					SELECT external_id, title, price, currency, sku, brand, category, status
-					FROM products 
-					WHERE organization_id = $1 AND status = 'ACTIVE'
+					SELECT product_id, product_title, product_sku, product_price, 
+						   product_currency, product_brand, product_category, product_status
+					FROM export_products 
+					WHERE export_id = $1 AND channel_id = $2 AND organization_id = $3
 					ORDER BY created_at DESC
-					LIMIT 20
-				`, organizationID)
+				`, exportID, channelID, organizationID)
 
 				var products []map[string]interface{}
 				if err == nil {
 					defer rows.Close()
 					for rows.Next() {
-						var externalID, title, currency, sku, brand, category, status string
+						var productID, title, sku, currency, brand, category, status string
 						var price float64
 
-						err := rows.Scan(&externalID, &title, &price, &currency, &sku, &brand, &category, &status)
+						err := rows.Scan(&productID, &title, &sku, &price, &currency, &brand, &category, &status)
 						if err != nil {
 							continue
 						}
 
 						products = append(products, map[string]interface{}{
-							"external_id": externalID,
+							"external_id": productID,
 							"title":       title,
 							"price":       price,
 							"currency":    currency,
@@ -8841,6 +8906,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							"status":      status,
 						})
 					}
+				} else {
+					log.Printf("❌ [EXPORT DEBUG] Failed to query exported products: %v", err)
 				}
 
 				c.JSON(http.StatusOK, gin.H{
