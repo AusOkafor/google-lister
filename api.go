@@ -8337,10 +8337,40 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					ORDER BY created_at DESC LIMIT 1
 				`, channelName, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
 
+				// Log the feed data found
+				log.Printf("🔍 [EXPORT DEBUG] Found feed for channel '%s': name='%s', format='%s', products=%d",
+					channelName, feedName, feedFormat, feedProductCount)
+
 				// Use real feed format or fallback to xml
 				exportFormat := feedFormat
 				if exportFormat == "" {
 					exportFormat = "xml"
+				}
+
+				// Don't create export if no feed is found
+				if feedName == "" {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"error":        "No feed found for this channel",
+						"message":      "Please create a feed first before exporting",
+						"channel_name": channelName,
+					})
+					return
+				}
+
+				// Check if there's already a recent export in progress
+				var recentExportCount int
+				err = db.QueryRow(`
+					SELECT COUNT(*) FROM export_history 
+					WHERE channel_id = $1 AND organization_id = $2 
+					AND status = 'processing' AND started_at > NOW() - INTERVAL '5 minutes'
+				`, channelID, organizationID).Scan(&recentExportCount)
+
+				if err == nil && recentExportCount > 0 {
+					c.JSON(http.StatusTooManyRequests, gin.H{
+						"error":   "Export already in progress",
+						"message": "Please wait for the current export to complete before starting a new one",
+					})
+					return
 				}
 
 				// Create export history record
@@ -8362,10 +8392,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Use real feed data or fallback to defaults
+				// Use only real feed data - no fallbacks
 				productsCount := feedProductCount
 				if productsCount == 0 {
-					productsCount = 150 // Fallback
+					log.Printf("⚠️ [EXPORT DEBUG] Feed has 0 products, using 0 instead of fallback")
 				}
 				fileSize := productsCount * 1024 // Estimate file size based on product count
 				processingTime := int(time.Since(startTime).Milliseconds())
