@@ -8444,12 +8444,17 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					log.Printf("⚠️ [EXPORT DEBUG] Feed has 0 products, using 0 instead of fallback")
 				}
 				fileSize := productsCount * 1024 // Estimate file size based on product count
-				processingTime := int(time.Since(startTime).Milliseconds())
 
 				// Simulate export processing (in real implementation, this would be async)
 				go func() {
+					log.Printf("🚀 [EXPORT DEBUG] Starting export processing for channel %s with %d products", channelID, productsCount)
+
 					// Simulate processing time
 					time.Sleep(2 * time.Second)
+
+					// Calculate actual processing time
+					processingTime := int(time.Since(startTime).Milliseconds())
+					log.Printf("⏱️ [EXPORT DEBUG] Export processing completed in %dms", processingTime)
 
 					// Update export record with success
 					_, err := db.Exec(`
@@ -8460,7 +8465,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					`, "completed", productsCount, fileSize, processingTime, exportID)
 
 					if err != nil {
-						log.Printf("Failed to update export record: %v", err)
+						log.Printf("❌ [EXPORT DEBUG] Failed to update export record: %v", err)
+					} else {
+						log.Printf("✅ [EXPORT DEBUG] Export record updated successfully for channel %s", channelID)
 					}
 
 					// Update analytics
@@ -8483,7 +8490,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					`, channelID, organizationID, productsCount, processingTime)
 
 					if err != nil {
-						log.Printf("Failed to update analytics: %v", err)
+						log.Printf("❌ [EXPORT DEBUG] Failed to update analytics: %v", err)
+					} else {
+						log.Printf("📊 [EXPORT DEBUG] Analytics updated successfully for channel %s", channelID)
 					}
 				}()
 
