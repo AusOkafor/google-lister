@@ -8762,6 +8762,99 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				})
 			})
 
+			// Get export details with products
+			channels.GET("/:id/exports/:exportId/details", func(c *gin.Context) {
+				channelID := c.Param("id")
+				exportID := c.Param("exportId")
+				organizationID := getOrCreateOrganizationID()
+
+				// Get export details
+				var exportDetails struct {
+					ID             string     `json:"id"`
+					Status         string     `json:"status"`
+					Format         string     `json:"format"`
+					ProductsCount  int        `json:"products_count"`
+					FileSize       int64      `json:"file_size"`
+					ProcessingTime int64      `json:"processing_time_ms"`
+					StartedAt      time.Time  `json:"started_at"`
+					CompletedAt    *time.Time `json:"completed_at"`
+					ErrorMessage   *string    `json:"error_message"`
+				}
+
+				err := db.QueryRow(`
+					SELECT id, status, format, products_count, file_size, 
+						   processing_time_ms, started_at, completed_at, error_message
+					FROM export_history 
+					WHERE id = $1 AND channel_id = $2 AND organization_id = $3
+				`, exportID, channelID, organizationID).Scan(
+					&exportDetails.ID, &exportDetails.Status, &exportDetails.Format,
+					&exportDetails.ProductsCount, &exportDetails.FileSize,
+					&exportDetails.ProcessingTime, &exportDetails.StartedAt,
+					&exportDetails.CompletedAt, &exportDetails.ErrorMessage)
+
+				if err != nil {
+					c.JSON(http.StatusNotFound, gin.H{"error": "Export not found"})
+					return
+				}
+
+				// Get the feed data that was used for this export
+				var feedName, feedFormat string
+				var feedProductCount int
+				err = db.QueryRow(`
+					SELECT name, format, products_count 
+					FROM product_feeds 
+					WHERE (channel = $1 OR channel ILIKE '%' || $1 || '%' OR $1 ILIKE '%' || channel || '%')
+					AND organization_id = $2
+					ORDER BY created_at DESC LIMIT 1
+				`, channelID, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
+
+				// Get sample products that would have been exported
+				// In a real implementation, this would get the actual products from the export
+				rows, err := db.Query(`
+					SELECT external_id, title, price, currency, sku, brand, category, status
+					FROM products 
+					WHERE organization_id = $1 AND status = 'ACTIVE'
+					ORDER BY created_at DESC
+					LIMIT 20
+				`, organizationID)
+
+				var products []map[string]interface{}
+				if err == nil {
+					defer rows.Close()
+					for rows.Next() {
+						var externalID, title, currency, sku, brand, category, status string
+						var price float64
+
+						err := rows.Scan(&externalID, &title, &price, &currency, &sku, &brand, &category, &status)
+						if err != nil {
+							continue
+						}
+
+						products = append(products, map[string]interface{}{
+							"external_id": externalID,
+							"title":       title,
+							"price":       price,
+							"currency":    currency,
+							"sku":         sku,
+							"brand":       brand,
+							"category":    category,
+							"status":      status,
+						})
+					}
+				}
+
+				c.JSON(http.StatusOK, gin.H{
+					"export": exportDetails,
+					"feed": gin.H{
+						"name":           feedName,
+						"format":         feedFormat,
+						"products_count": feedProductCount,
+					},
+					"products": products,
+					"message":  "Export details retrieved successfully",
+				})
+			})
+
 			// Get export preview for a channel
 			channels.GET("/:id/preview", func(c *gin.Context) {
 				channelID := c.Param("id")
