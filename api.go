@@ -8516,6 +8516,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 					// Store the actual exported products
 					log.Printf("📦 [EXPORT DEBUG] Storing exported products for export %s", exportID)
+					log.Printf("📦 [EXPORT DEBUG] Organization ID: %s, Products Count: %d", organizationID, productsCount)
 
 					// Get products from the feed that was used for this export
 					productRows, err := db.Query(`
@@ -8526,9 +8527,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						LIMIT $2
 					`, organizationID, productsCount)
 
+					log.Printf("📦 [EXPORT DEBUG] Product query result: err=%v", err)
+
 					if err == nil {
 						defer productRows.Close()
 						productCount := 0
+
+						log.Printf("📦 [EXPORT DEBUG] Starting to process product rows...")
 
 						for productRows.Next() {
 							var externalID, title, currency, sku, brand, category, status string
@@ -8536,8 +8541,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 							err := productRows.Scan(&externalID, &title, &price, &currency, &sku, &brand, &category, &status)
 							if err != nil {
+								log.Printf("❌ [EXPORT DEBUG] Failed to scan product row: %v", err)
 								continue
 							}
+
+							log.Printf("📦 [EXPORT DEBUG] Processing product: %s - %s", externalID, title)
 
 							// Insert each product into export_products table
 							_, err = db.Exec(`
@@ -8553,6 +8561,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 								log.Printf("❌ [EXPORT DEBUG] Failed to store product %s: %v", externalID, err)
 							} else {
 								productCount++
+								log.Printf("✅ [EXPORT DEBUG] Successfully stored product %s", externalID)
 							}
 						}
 
