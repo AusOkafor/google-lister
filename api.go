@@ -7497,51 +7497,85 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				offset := (page - 1) * limit
 
-				// Mock export history data (would come from export_logs table in production)
-				history := []map[string]interface{}{
-					{
-						"id":             "exp_001",
+				// Get organization ID from context
+				organizationID := getOrCreateOrganizationID()
+
+				// Get real export history from database
+				rows, err := db.Query(`
+					SELECT id, status, format, products_count, file_size, 
+						   processing_time_ms, started_at, completed_at, error_message
+					FROM export_history 
+					WHERE channel_id = $1 AND organization_id = $2
+					ORDER BY started_at DESC
+					LIMIT $3 OFFSET $4
+				`, channel, organizationID, limit, offset)
+
+				if err != nil {
+					log.Printf("Error querying export history: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error":   "Failed to fetch export history",
+						"details": err.Error(),
+					})
+					return
+				}
+				defer rows.Close()
+
+				var history []map[string]interface{}
+				for rows.Next() {
+					var id, status, format, errorMessage sql.NullString
+					var productsCount, fileSize, processingTime sql.NullInt64
+					var startedAt, completedAt sql.NullTime
+
+					err := rows.Scan(&id, &status, &format, &productsCount, &fileSize,
+						&processingTime, &startedAt, &completedAt, &errorMessage)
+					if err != nil {
+						log.Printf("Error scanning export history row: %v", err)
+						continue
+					}
+
+					// Format file size
+					fileSizeStr := "0 MB"
+					if fileSize.Valid && fileSize.Int64 > 0 {
+						fileSizeStr = fmt.Sprintf("%.2f MB", float64(fileSize.Int64)/1024/1024)
+					}
+
+					// Format duration
+					duration := "0s"
+					if processingTime.Valid && processingTime.Int64 > 0 {
+						duration = fmt.Sprintf("%ds", processingTime.Int64/1000)
+					}
+
+					historyItem := map[string]interface{}{
+						"id":             id.String,
 						"channel":        channel,
-						"status":         "completed",
-						"products_count": 150,
-						"file_size":      "2.4 MB",
-						"format":         "xml",
-						"created_at":     time.Now().Add(-2 * time.Hour),
-						"duration":       "45 seconds",
-					},
-					{
-						"id":             "exp_002",
-						"channel":        channel,
-						"status":         "completed",
-						"products_count": 150,
-						"file_size":      "1.8 MB",
-						"format":         "csv",
-						"created_at":     time.Now().Add(-24 * time.Hour),
-						"duration":       "32 seconds",
-					},
-					{
-						"id":             "exp_003",
-						"channel":        channel,
-						"status":         "failed",
-						"products_count": 0,
-						"file_size":      "0 MB",
-						"format":         "xml",
-						"created_at":     time.Now().Add(-72 * time.Hour),
-						"duration":       "0 seconds",
-						"error":          "Authentication failed",
-					},
+						"status":         status.String,
+						"products_count": productsCount.Int64,
+						"file_size":      fileSizeStr,
+						"format":         format.String,
+						"duration":       duration,
+						"created_at":     startedAt.Time,
+					}
+
+					if completedAt.Valid {
+						historyItem["completed_at"] = completedAt.Time
+					}
+					if errorMessage.Valid {
+						historyItem["error"] = errorMessage.String
+					}
+
+					history = append(history, historyItem)
 				}
 
-				// Paginate results
-				start := offset
-				end := offset + limit
-				if start >= len(history) {
-					history = []map[string]interface{}{}
-				} else {
-					if end > len(history) {
-						end = len(history)
-					}
-					history = history[start:end]
+				// Get total count for pagination
+				var totalCount int
+				err = db.QueryRow(`
+					SELECT COUNT(*) FROM export_history 
+					WHERE channel_id = $1 AND organization_id = $2
+				`, channel, organizationID).Scan(&totalCount)
+
+				if err != nil {
+					log.Printf("Error getting export history count: %v", err)
+					totalCount = len(history)
 				}
 
 				c.JSON(http.StatusOK, gin.H{
@@ -7549,8 +7583,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					"pagination": gin.H{
 						"page":        page,
 						"limit":       limit,
-						"total":       len(history),
-						"total_pages": (len(history) + limit - 1) / limit,
+						"total":       totalCount,
+						"total_pages": (totalCount + limit - 1) / limit,
 					},
 					"message": "Export history retrieved successfully",
 				})
@@ -8326,16 +8360,26 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Get real feed data for this channel first
+				// Get real feed data for this channel first - use exact match first, then flexible
 				var feedName, feedFormat string
 				var feedProductCount int
 				err = db.QueryRow(`
 					SELECT name, format, products_count 
 					FROM product_feeds 
-					WHERE (channel = $1 OR channel ILIKE '%' || $1 || '%' OR $1 ILIKE '%' || channel || '%')
-					AND organization_id = $2
+					WHERE channel = $1 AND organization_id = $2
 					ORDER BY created_at DESC LIMIT 1
 				`, channelName, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
+
+				// If no exact match, try flexible matching
+				if err != nil || feedName == "" {
+					err = db.QueryRow(`
+						SELECT name, format, products_count 
+						FROM product_feeds 
+						WHERE (channel ILIKE '%' || $1 || '%' OR $1 ILIKE '%' || channel || '%')
+						AND organization_id = $2
+						ORDER BY created_at DESC LIMIT 1
+					`, channelName, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
+				}
 
 				// Log the feed data found
 				log.Printf("🔍 [EXPORT DEBUG] Found feed for channel '%s': name='%s', format='%s', products=%d",
@@ -8357,18 +8401,20 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Check if there's already a recent export in progress
+				// Check if there's already a recent export for this specific feed
 				var recentExportCount int
 				err = db.QueryRow(`
 					SELECT COUNT(*) FROM export_history 
 					WHERE channel_id = $1 AND organization_id = $2 
-					AND status = 'processing' AND started_at > NOW() - INTERVAL '5 minutes'
+					AND status IN ('processing', 'completed') 
+					AND started_at > NOW() - INTERVAL '10 minutes'
 				`, channelID, organizationID).Scan(&recentExportCount)
 
 				if err == nil && recentExportCount > 0 {
 					c.JSON(http.StatusTooManyRequests, gin.H{
-						"error":   "Export already in progress",
-						"message": "Please wait for the current export to complete before starting a new one",
+						"error":          "Recent export already exists",
+						"message":        "Please wait at least 10 minutes before creating another export for this channel",
+						"recent_exports": recentExportCount,
 					})
 					return
 				}
