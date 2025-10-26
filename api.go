@@ -8527,7 +8527,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						LIMIT $2
 					`, organizationID, productsCount)
 
-					log.Printf("📦 [EXPORT DEBUG] Product query result: err=%v", err)
+					if err != nil {
+						log.Printf("❌ [EXPORT DEBUG] Failed to query products from database: %v", err)
+					} else {
+						log.Printf("✅ [EXPORT DEBUG] Product query succeeded")
+					}
 
 					if err == nil {
 						defer productRows.Close()
@@ -8559,9 +8563,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 							if err != nil {
 								log.Printf("❌ [EXPORT DEBUG] Failed to store product %s: %v", externalID, err)
+								log.Printf("❌ [EXPORT DEBUG] Product data: ID=%s, Title=%s, SKU=%s, Price=%.2f",
+									externalID, title, sku, price)
 							} else {
 								productCount++
-								log.Printf("✅ [EXPORT DEBUG] Successfully stored product %s", externalID)
+								if productCount <= 3 {
+									// Only log first few to avoid spam
+									log.Printf("✅ [EXPORT DEBUG] Successfully stored product %s", externalID)
+								}
 							}
 						}
 
