@@ -8558,14 +8558,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 								skuValue = sku.String
 							}
 
-							_, err = db.Exec(`
+							// Use a fresh prepared statement to avoid caching issues
+							stmt, err := db.Prepare(`
 								INSERT INTO export_products (
 									export_id, channel_id, organization_id, product_id,
 									product_title, product_sku, product_price, product_currency,
 									product_brand, product_category, product_status, export_status
 								) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-							`, exportID, channelID, organizationID, externalID,
+							`)
+							if err != nil {
+								log.Printf("❌ [EXPORT DEBUG] Failed to prepare statement: %v", err)
+								continue
+							}
+
+							_, err = stmt.Exec(exportID, channelID, organizationID, externalID,
 								title, skuValue, price, currency, brand, category, status, "exported")
+							stmt.Close()
 
 							if err != nil {
 								log.Printf("❌ [EXPORT DEBUG] Failed to store product %s: %v", externalID, err)
@@ -8871,6 +8879,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					ErrorMessage   *string    `json:"error_message"`
 				}
 
+				log.Printf("🔍 [EXPORT DEBUG] Looking for export: ID=%s, Channel=%s, Org=%s", exportID, channelID, organizationID)
+
 				err := db.QueryRow(`
 					SELECT id, status, format, products_count, file_size, 
 						   processing_time_ms, started_at, completed_at, error_message
@@ -8883,9 +8893,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					&exportDetails.CompletedAt, &exportDetails.ErrorMessage)
 
 				if err != nil {
+					log.Printf("❌ [EXPORT DEBUG] Export not found: %v", err)
 					c.JSON(http.StatusNotFound, gin.H{"error": "Export not found"})
 					return
 				}
+
+				log.Printf("✅ [EXPORT DEBUG] Found export: %s, Status: %s", exportDetails.ID, exportDetails.Status)
 
 				// Get the feed data that was used for this export
 				var feedName, feedFormat string
