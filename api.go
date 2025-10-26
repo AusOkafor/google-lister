@@ -8540,7 +8540,8 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						log.Printf("📦 [EXPORT DEBUG] Starting to process product rows...")
 
 						for productRows.Next() {
-							var externalID, title, currency, sku, brand, category, status string
+							var externalID, title, currency, brand, category, status string
+							var sku sql.NullString
 							var price float64
 
 							err := productRows.Scan(&externalID, &title, &price, &currency, &sku, &brand, &category, &status)
@@ -8552,6 +8553,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							log.Printf("📦 [EXPORT DEBUG] Processing product: %s - %s", externalID, title)
 
 							// Insert each product into export_products table
+							skuValue := ""
+							if sku.Valid {
+								skuValue = sku.String
+							}
+
 							_, err = db.Exec(`
 								INSERT INTO export_products (
 									export_id, channel_id, organization_id, product_id,
@@ -8559,12 +8565,12 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 									product_brand, product_category, product_status, export_status
 								) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 							`, exportID, channelID, organizationID, externalID,
-								title, sku, price, currency, brand, category, status, "exported")
+								title, skuValue, price, currency, brand, category, status, "exported")
 
 							if err != nil {
 								log.Printf("❌ [EXPORT DEBUG] Failed to store product %s: %v", externalID, err)
 								log.Printf("❌ [EXPORT DEBUG] Product data: ID=%s, Title=%s, SKU=%s, Price=%.2f",
-									externalID, title, sku, price)
+									externalID, title, skuValue, price)
 							} else {
 								productCount++
 								if productCount <= 3 {
