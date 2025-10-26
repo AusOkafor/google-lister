@@ -8912,6 +8912,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				`, channelID, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
 
 				// Get the actual exported products for this specific export
+				log.Printf("🔍 [EXPORT DEBUG] Querying exported products for export: %s", exportID)
 				rows, err := db.Query(`
 					SELECT product_id, product_title, product_sku, product_price, 
 						   product_currency, product_brand, product_category, product_status
@@ -8923,26 +8924,47 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				var products []map[string]interface{}
 				if err == nil {
 					defer rows.Close()
+					productCount := 0
 					for rows.Next() {
-						var productID, title, sku, currency, brand, category, status string
+						var productID, title, currency, status string
+						var sku, brand, category sql.NullString
 						var price float64
 
 						err := rows.Scan(&productID, &title, &sku, &price, &currency, &brand, &category, &status)
 						if err != nil {
+							log.Printf("❌ [EXPORT DEBUG] Failed to scan exported product: %v", err)
 							continue
 						}
+
+						// Handle NULL values
+						skuValue := ""
+						if sku.Valid {
+							skuValue = sku.String
+						}
+						brandValue := ""
+						if brand.Valid {
+							brandValue = brand.String
+						}
+						categoryValue := ""
+						if category.Valid {
+							categoryValue = category.String
+						}
+
+						productCount++
+						log.Printf("📦 [EXPORT DEBUG] Loaded product %d: %s - %s", productCount, productID, title)
 
 						products = append(products, map[string]interface{}{
 							"external_id": productID,
 							"title":       title,
 							"price":       price,
 							"currency":    currency,
-							"sku":         sku,
-							"brand":       brand,
-							"category":    category,
+							"sku":         skuValue,
+							"brand":       brandValue,
+							"category":    categoryValue,
 							"status":      status,
 						})
 					}
+					log.Printf("✅ [EXPORT DEBUG] Successfully loaded %d exported products", productCount)
 				} else {
 					log.Printf("❌ [EXPORT DEBUG] Failed to query exported products: %v", err)
 				}
