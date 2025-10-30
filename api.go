@@ -10043,7 +10043,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Only CSV files are allowed"})
 				return
 			}
-
+// check if the file is too large
 			// Open uploaded file
 			fileHandle, err := file.Open()
 			if err != nil {
