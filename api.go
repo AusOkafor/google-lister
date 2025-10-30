@@ -1344,6 +1344,13 @@ func initDB() error {
 		}
 	}
 
+	// Ensure export_history has a metadata column for progress/meta info
+	_, err = db.Exec(`ALTER TABLE export_history ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'`)
+	if err != nil {
+		fmt.Printf("[ERROR] Failed to ensure export_history.metadata column: %v\n", err)
+		return fmt.Errorf("failed to add metadata column: %v", err)
+	}
+
 	return nil
 }
 
@@ -8457,6 +8464,18 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
+				// Initialize export metadata progress
+				_, _ = db.Exec(`
+					UPDATE export_history
+					SET metadata = jsonb_set(COALESCE(metadata, '{}'), '{progress}',
+						jsonb_build_object(
+							'inserted', 0,
+							'total', $1,
+							'status', 'processing'
+						), true)
+					WHERE id = $2
+				`, feedProductCount, exportID)
+
 				// Use only real feed data - no fallbacks
 				productsCount := feedProductCount
 				if productsCount == 0 {
@@ -8585,6 +8604,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 									// Only log first few to avoid spam
 									log.Printf("✅ [EXPORT DEBUG] Successfully stored product %s", externalID)
 								}
+								// Periodically update progress metadata
+								if productCount%10 == 0 {
+									_, _ = db.Exec(`
+									UPDATE export_history
+									SET metadata = jsonb_set(COALESCE(metadata, '{}'), '{progress}',
+										jsonb_build_object(
+											'inserted', $1,
+											'total', $2,
+											'status', 'processing'
+										), true)
+									WHERE id = $3
+								`, productCount, productsCount, exportID)
+								}
 							}
 						}
 
@@ -8592,9 +8624,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						// Ensure export_history reflects the actual stored count
 						_, err = db.Exec(`
                             UPDATE export_history
-                            SET products_count = $1
-                            WHERE id = $2
-                        `, productCount, exportID)
+                            SET products_count = $1,
+                                metadata = jsonb_set(COALESCE(metadata, '{}'), '{progress}',
+                                    jsonb_build_object(
+                                        'inserted', $1,
+                                        'total', $2,
+                                        'status', 'completed'
+                                    ), true)
+                            WHERE id = $3
+                        `, productCount, productsCount, exportID)
 						if err != nil {
 							log.Printf("⚠️ [EXPORT DEBUG] Failed to update export_history products_count: %v", err)
 						} else {
@@ -8888,20 +8926,22 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					StartedAt      time.Time  `json:"started_at"`
 					CompletedAt    *time.Time `json:"completed_at"`
 					ErrorMessage   *string    `json:"error_message"`
+					Metadata       *string    `json:"metadata"`
 				}
 
 				log.Printf("🔍 [EXPORT DEBUG] Looking for export: ID=%s, Channel=%s, Org=%s", exportID, channelID, organizationID)
 
 				err := db.QueryRow(`
 					SELECT id, status, format, products_count, file_size, 
-						   processing_time_ms, started_at, completed_at, error_message
+						   processing_time_ms, started_at, completed_at, error_message,
+						   CAST(metadata AS TEXT)
 					FROM export_history 
 					WHERE id = $1 AND channel_id = $2 AND organization_id = $3
 				`, exportID, channelID, organizationID).Scan(
 					&exportDetails.ID, &exportDetails.Status, &exportDetails.Format,
 					&exportDetails.ProductsCount, &exportDetails.FileSize,
 					&exportDetails.ProcessingTime, &exportDetails.StartedAt,
-					&exportDetails.CompletedAt, &exportDetails.ErrorMessage)
+					&exportDetails.CompletedAt, &exportDetails.ErrorMessage, &exportDetails.Metadata)
 
 				if err != nil {
 					log.Printf("❌ [EXPORT DEBUG] Export not found: %v", err)
@@ -10043,7 +10083,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Only CSV files are allowed"})
 				return
 			}
-// check if the file is too large
+			// check if the file is too large
 			// Open uploaded file
 			fileHandle, err := file.Open()
 			if err != nil {
