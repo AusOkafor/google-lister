@@ -8589,6 +8589,17 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						}
 
 						log.Printf("✅ [EXPORT DEBUG] Stored %d products for export %s", productCount, exportID)
+						// Ensure export_history reflects the actual stored count
+						_, err = db.Exec(`
+                            UPDATE export_history
+                            SET products_count = $1
+                            WHERE id = $2
+                        `, productCount, exportID)
+						if err != nil {
+							log.Printf("⚠️ [EXPORT DEBUG] Failed to update export_history products_count: %v", err)
+						} else {
+							log.Printf("✅ [EXPORT DEBUG] export_history products_count updated to %d for %s", productCount, exportID)
+						}
 					} else {
 						log.Printf("❌ [EXPORT DEBUG] Failed to query products: %v", err)
 					}
