@@ -8915,6 +8915,46 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				exportID := c.Param("exportId")
 				organizationID := getOrCreateOrganizationID()
 
+				// Special-case: synthetic feed-ready export details
+				if exportID == "feed-ready" {
+					var feedName, feedFormat string
+					var feedProductCount int
+					err := db.QueryRow(`
+							SELECT name, format, products_count 
+							FROM product_feeds 
+							WHERE (channel = $1 OR channel ILIKE '%' || $1 || '%' OR $1 ILIKE '%' || channel || '%')
+							AND organization_id = $2
+							ORDER BY created_at DESC LIMIT 1
+						`, channelID, organizationID).Scan(&feedName, &feedFormat, &feedProductCount)
+					if err != nil {
+						c.JSON(http.StatusNotFound, gin.H{"error": "Feed not found"})
+						return
+					}
+
+					// Return a minimal synthetic export details payload
+					c.JSON(http.StatusOK, gin.H{
+						"export": map[string]interface{}{
+							"id":                 exportID,
+							"status":             "ready",
+							"format":             strings.ToLower(feedFormat),
+							"products_count":     feedProductCount,
+							"file_size":          0,
+							"processing_time_ms": 0,
+							"started_at":         nil,
+							"completed_at":       nil,
+							"error_message":      nil,
+						},
+						"feed": gin.H{
+							"name":           feedName,
+							"format":         feedFormat,
+							"products_count": feedProductCount,
+						},
+						"products": []map[string]interface{}{},
+						"message":  "Feed is ready; no completed export yet",
+					})
+					return
+				}
+
 				// Get export details
 				var exportDetails struct {
 					ID             string     `json:"id"`
