@@ -8588,6 +8588,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							}
 
 							// Use direct Exec to avoid prepared statement issues on pooled connections
+							if productCount == 0 {
+								log.Printf("🔍 [EXPORT DEBUG] First product insert: exportID=%s, channelID=%s, orgID=%s",
+									exportID, channelID, organizationID)
+							}
+
 							_, err = db.Exec(`
 							INSERT INTO export_products (
 								export_id, channel_id, organization_id, product_id,
@@ -9009,18 +9014,32 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 				// Get the actual exported products for this specific export
 				log.Printf("🔍 [EXPORT DEBUG] Querying exported products for export: %s", exportID)
+
+				// First check how many products exist for this export (using export_id only)
+				var totalProductsInTable int
+				err = db.QueryRow(`
+					SELECT COUNT(*) FROM export_products 
+					WHERE export_id = $1
+				`, exportID).Scan(&totalProductsInTable)
+				log.Printf("🔍 [EXPORT DEBUG] Total products in export_products table for export_id %s: %d", exportID, totalProductsInTable)
+
+				// Query using export_id only since it's the primary relationship
 				rows, err := db.Query(`
 					SELECT product_id, product_title, product_sku, product_price, 
 						   product_currency, product_brand, product_category, product_status
 					FROM export_products 
-					WHERE export_id = $1 AND channel_id = $2 AND organization_id = $3
+					WHERE export_id = $1
 					ORDER BY created_at DESC
-				`, exportID, channelID, organizationID)
+				`, exportID)
 
 				var products []map[string]interface{}
-				if err == nil {
+				var productCount int
+				if err != nil {
+					log.Printf("❌ [EXPORT DEBUG] Failed to query exported products: %v", err)
+					products = []map[string]interface{}{}
+				} else if rows != nil {
 					defer rows.Close()
-					productCount := 0
+					productCount = 0
 					for rows.Next() {
 						var productID, title, currency, status string
 						var sku, brand, category sql.NullString
@@ -9061,8 +9080,6 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						})
 					}
 					log.Printf("✅ [EXPORT DEBUG] Successfully loaded %d exported products", productCount)
-				} else {
-					log.Printf("❌ [EXPORT DEBUG] Failed to query exported products: %v", err)
 				}
 
 				c.JSON(http.StatusOK, gin.H{
