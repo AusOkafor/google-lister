@@ -8500,6 +8500,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					log.Printf("📦 [EXPORT DEBUG] Storing exported products for export %s", exportID)
 					log.Printf("📦 [EXPORT DEBUG] Organization ID: %s, Products Count: %d", organizationID, productsCount)
 
+					// First check how many ACTIVE products exist
+					var totalActiveProducts int
+					err = db.QueryRow(`
+						SELECT COUNT(*) FROM products 
+						WHERE organization_id = $1 AND status = 'ACTIVE'
+					`, organizationID).Scan(&totalActiveProducts)
+					log.Printf("🔍 [EXPORT DEBUG] Total ACTIVE products in database: %d (expected: %d)", totalActiveProducts, productsCount)
+
 					// Get products from the feed that was used for this export
 					productRows, err := db.Query(`
 						SELECT external_id, title, price, currency, sku, brand, category, status
@@ -8512,32 +8520,50 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					if err != nil {
 						log.Printf("❌ [EXPORT DEBUG] Failed to query products from database: %v", err)
 					} else {
-						log.Printf("✅ [EXPORT DEBUG] Product query succeeded")
+						log.Printf("✅ [EXPORT DEBUG] Product query succeeded, fetching up to %d products", productsCount)
 					}
 
 					if err == nil {
 						defer productRows.Close()
 						productCount := 0
+						failedCount := 0
+						scanErrorCount := 0
+						rowsProcessed := 0
 
 						log.Printf("📦 [EXPORT DEBUG] Starting to process product rows...")
 
 						for productRows.Next() {
-							var externalID, title, currency, brand, category, status string
-							var sku sql.NullString
+							rowsProcessed++
+							if rowsProcessed <= 5 || rowsProcessed%20 == 0 {
+								log.Printf("📊 [EXPORT DEBUG] Processing row %d of query result...", rowsProcessed)
+							}
+							var externalID, title, currency, status string
+							var sku, brand, category sql.NullString
 							var price float64
 
 							err := productRows.Scan(&externalID, &title, &price, &currency, &sku, &brand, &category, &status)
 							if err != nil {
+								scanErrorCount++
 								log.Printf("❌ [EXPORT DEBUG] Failed to scan product row: %v", err)
 								continue
 							}
 
-							log.Printf("📦 [EXPORT DEBUG] Processing product: %s - %s", externalID, title)
+							if productCount < 5 || productCount%10 == 0 {
+								log.Printf("📦 [EXPORT DEBUG] Processing product %d: %s - %s", productCount+1, externalID, title)
+							}
 
 							// Insert each product into export_products table
 							skuValue := ""
 							if sku.Valid {
 								skuValue = sku.String
+							}
+							brandValue := ""
+							if brand.Valid {
+								brandValue = brand.String
+							}
+							categoryValue := ""
+							if category.Valid {
+								categoryValue = category.String
 							}
 
 							// Use direct Exec to avoid prepared statement issues on pooled connections
@@ -8553,17 +8579,21 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 								product_brand, product_category, product_status, export_status
 							) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 						`, exportID, channelID, organizationID, externalID,
-								title, skuValue, price, currency, brand, category, status, "exported")
+								title, skuValue, price, currency, brandValue, categoryValue, status, "exported")
 
 							if err != nil {
-								log.Printf("❌ [EXPORT DEBUG] Failed to store product %s: %v", externalID, err)
-								log.Printf("❌ [EXPORT DEBUG] Product data: ID=%s, Title=%s, SKU=%s, Price=%.2f",
-									externalID, title, skuValue, price)
+								failedCount++
+								if failedCount <= 10 {
+									log.Printf("❌ [EXPORT DEBUG] Failed to store product %s: %v", externalID, err)
+									log.Printf("❌ [EXPORT DEBUG] Product data: ID=%s, Title=%s, SKU=%s, Price=%.2f",
+										externalID, title, skuValue, price)
+								} else if failedCount == 11 {
+									log.Printf("⚠️ [EXPORT DEBUG] More than 10 products failed to store, suppressing further error logs...")
+								}
 							} else {
 								productCount++
-								if productCount <= 3 {
-									// Only log first few to avoid spam
-									log.Printf("✅ [EXPORT DEBUG] Successfully stored product %s", externalID)
+								if productCount <= 5 || productCount%10 == 0 {
+									log.Printf("✅ [EXPORT DEBUG] Successfully stored product %d/%d: %s", productCount, productsCount, externalID)
 								}
 								// Periodically update progress metadata
 								if productCount%10 == 0 {
@@ -8580,6 +8610,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 								}
 							}
 						}
+
+						log.Printf("📊 [EXPORT DEBUG] Product insertion summary: RowsProcessed=%d, Success=%d, Failed=%d, ScanErrors=%d, Expected=%d",
+							rowsProcessed, productCount, failedCount, scanErrorCount, productsCount)
 
 						log.Printf("✅ [EXPORT DEBUG] Attempted to store %d products for export %s", productCount, exportID)
 
