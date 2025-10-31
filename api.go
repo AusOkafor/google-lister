@@ -8496,53 +8496,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 				go func() {
 					log.Printf("🚀 [EXPORT DEBUG] Starting export processing for channel %s with %d products", channelID, productsCount)
 
-					// Simulate processing time
-					time.Sleep(2 * time.Second)
-
-					// Calculate actual processing time
-					processingTime := int(time.Since(startTime).Milliseconds())
-					log.Printf("⏱️ [EXPORT DEBUG] Export processing completed in %dms", processingTime)
-
-					// Update export record with success
-					_, err := db.Exec(`
-						UPDATE export_history SET 
-							status = $1, products_count = $2, file_size = $3, 
-							processing_time_ms = $4, completed_at = NOW()
-						WHERE id = $5
-					`, "completed", productsCount, fileSize, processingTime, exportID)
-
-					if err != nil {
-						log.Printf("❌ [EXPORT DEBUG] Failed to update export record: %v", err)
-					} else {
-						log.Printf("✅ [EXPORT DEBUG] Export record updated successfully for channel %s", channelID)
-					}
-
-					// Update analytics
-					_, err = db.Exec(`
-						INSERT INTO export_analytics (
-							channel_id, organization_id, date, total_exports, 
-							successful_exports, total_products_exported, 
-							average_processing_time_ms, created_at, updated_at
-						) VALUES ($1, $2, CURRENT_DATE, 1, 1, $3, $4, NOW(), NOW())
-						ON CONFLICT (channel_id, organization_id, date) 
-						DO UPDATE SET 
-							total_exports = export_analytics.total_exports + 1,
-							successful_exports = export_analytics.successful_exports + 1,
-							total_products_exported = export_analytics.total_products_exported + $3,
-							average_processing_time_ms = (
-								(export_analytics.average_processing_time_ms * export_analytics.successful_exports + $4) / 
-								(export_analytics.successful_exports + 1)
-							),
-							updated_at = NOW()
-					`, channelID, organizationID, productsCount, processingTime)
-
-					if err != nil {
-						log.Printf("❌ [EXPORT DEBUG] Failed to update analytics: %v", err)
-					} else {
-						log.Printf("📊 [EXPORT DEBUG] Analytics updated successfully for channel %s", channelID)
-					}
-
-					// Store the actual exported products
+					// Store the actual exported products FIRST
 					log.Printf("📦 [EXPORT DEBUG] Storing exported products for export %s", exportID)
 					log.Printf("📦 [EXPORT DEBUG] Organization ID: %s, Products Count: %d", organizationID, productsCount)
 
@@ -8627,8 +8581,25 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							}
 						}
 
-						log.Printf("✅ [EXPORT DEBUG] Stored %d products for export %s", productCount, exportID)
-						// Ensure export_history reflects the actual stored count
+						log.Printf("✅ [EXPORT DEBUG] Attempted to store %d products for export %s", productCount, exportID)
+
+						// Verify actual count in database
+						var actualCountInDB int
+						verifyErr := db.QueryRow(`
+							SELECT COUNT(*) FROM export_products WHERE export_id = $1
+						`, exportID).Scan(&actualCountInDB)
+
+						if verifyErr != nil {
+							log.Printf("⚠️ [EXPORT DEBUG] Failed to verify product count: %v", verifyErr)
+							actualCountInDB = productCount // Fallback to our count
+						} else {
+							log.Printf("🔍 [EXPORT DEBUG] Verified: %d products actually stored in database for export %s", actualCountInDB, exportID)
+							if actualCountInDB != productCount {
+								log.Printf("⚠️ [EXPORT DEBUG] Count mismatch: counted %d but database has %d", productCount, actualCountInDB)
+							}
+						}
+
+						// Ensure export_history reflects the actual stored count from database
 						_, err = db.Exec(`
                             UPDATE export_history
                             SET products_count = $1,
@@ -8639,11 +8610,53 @@ func Handler(w http.ResponseWriter, r *http.Request) {
                                         'status', 'completed'
                                     ), true)
                             WHERE id = $3
-                        `, productCount, productsCount, exportID)
+                        `, actualCountInDB, productsCount, exportID)
 						if err != nil {
 							log.Printf("⚠️ [EXPORT DEBUG] Failed to update export_history products_count: %v", err)
 						} else {
-							log.Printf("✅ [EXPORT DEBUG] export_history products_count updated to %d for %s", productCount, exportID)
+							log.Printf("✅ [EXPORT DEBUG] export_history products_count updated to %d for %s", actualCountInDB, exportID)
+						}
+
+						// Now update status to completed with actual stored count
+						processingTime := int(time.Since(startTime).Milliseconds())
+						log.Printf("⏱️ [EXPORT DEBUG] Export processing completed in %dms", processingTime)
+
+						_, err = db.Exec(`
+							UPDATE export_history SET 
+								status = $1, products_count = $2, file_size = $3, 
+								processing_time_ms = $4, completed_at = NOW()
+							WHERE id = $5
+						`, "completed", actualCountInDB, fileSize, processingTime, exportID)
+
+						if err != nil {
+							log.Printf("❌ [EXPORT DEBUG] Failed to update export record: %v", err)
+						} else {
+							log.Printf("✅ [EXPORT DEBUG] Export record updated successfully for channel %s", channelID)
+						}
+
+						// Update analytics with actual stored count
+						_, err = db.Exec(`
+							INSERT INTO export_analytics (
+								channel_id, organization_id, date, total_exports, 
+								successful_exports, total_products_exported, 
+								average_processing_time_ms, created_at, updated_at
+							) VALUES ($1, $2, CURRENT_DATE, 1, 1, $3, $4, NOW(), NOW())
+							ON CONFLICT (channel_id, organization_id, date) 
+							DO UPDATE SET 
+								total_exports = export_analytics.total_exports + 1,
+								successful_exports = export_analytics.successful_exports + 1,
+								total_products_exported = export_analytics.total_products_exported + $3,
+								average_processing_time_ms = (
+									(export_analytics.average_processing_time_ms * export_analytics.successful_exports + $4) / 
+									(export_analytics.successful_exports + 1)
+								),
+								updated_at = NOW()
+						`, channelID, organizationID, actualCountInDB, processingTime)
+
+						if err != nil {
+							log.Printf("❌ [EXPORT DEBUG] Failed to update analytics: %v", err)
+						} else {
+							log.Printf("📊 [EXPORT DEBUG] Analytics updated successfully for channel %s", channelID)
 						}
 					} else {
 						log.Printf("❌ [EXPORT DEBUG] Failed to query products: %v", err)
