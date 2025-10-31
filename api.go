@@ -8437,20 +8437,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				// Check if there's already a recent export for this specific feed
-				var recentExportCount int
+				// Check if there's already a processing export (don't block completed exports)
+				var processingExportCount int
 				err = db.QueryRow(`
 					SELECT COUNT(*) FROM export_history 
 					WHERE channel_id = $1 AND organization_id = $2 
-					AND status IN ('processing', 'completed') 
-					AND started_at > NOW() - INTERVAL '10 minutes'
-				`, channelID, organizationID).Scan(&recentExportCount)
+					AND status = 'processing'
+				`, channelID, organizationID).Scan(&processingExportCount)
 
-				if err == nil && recentExportCount > 0 {
+				if err == nil && processingExportCount > 0 {
 					c.JSON(http.StatusTooManyRequests, gin.H{
-						"error":          "Recent export already exists",
-						"message":        "Please wait at least 10 minutes before creating another export for this channel",
-						"recent_exports": recentExportCount,
+						"error":              "Export already in progress",
+						"message":            "Please wait for the current export to complete before starting a new one",
+						"processing_exports": processingExportCount,
 					})
 					return
 				}
