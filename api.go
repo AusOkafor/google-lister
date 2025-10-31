@@ -8701,6 +8701,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 						"started_at":         startedAt,
 						"completed_at":       completedAt,
 						"error_message":      errorMessage,
+						"timestamp":          startedAt,
 					}
 					exports = append(exports, export)
 				}
@@ -8747,9 +8748,10 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 							"products_count":     feedProductCount,
 							"file_size":          0,
 							"processing_time_ms": 0,
-							"started_at":         nil,
+							"started_at":         time.Now().UTC().Format(time.RFC3339),
 							"completed_at":       nil,
 							"error_message":      nil,
+							"timestamp":          time.Now().UTC().Format(time.RFC3339),
 							"feed_name":          feedName,
 							"channel_name":       channelName,
 							"message":            fmt.Sprintf("Feed '%s' ready for export with %d products", feedName, feedProductCount),
