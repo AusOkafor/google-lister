@@ -1351,6 +1351,16 @@ func initDB() error {
 		return fmt.Errorf("failed to add metadata column: %v", err)
 	}
 
+	// Ensure export_analytics has a unique constraint for upsert
+	_, err = db.Exec(`
+			CREATE UNIQUE INDEX IF NOT EXISTS ux_export_analytics_channel_org_date
+			ON export_analytics(channel_id, organization_id, date)
+		`)
+	if err != nil {
+		fmt.Printf("[ERROR] Failed to ensure export_analytics unique index: %v\n", err)
+		return fmt.Errorf("failed to add unique index: %v", err)
+	}
+
 	return nil
 }
 
@@ -8577,22 +8587,15 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 								skuValue = sku.String
 							}
 
-							// Use a fresh prepared statement to avoid caching issues
-							stmt, err := db.Prepare(`
-								INSERT INTO export_products (
-									export_id, channel_id, organization_id, product_id,
-									product_title, product_sku, product_price, product_currency,
-									product_brand, product_category, product_status, export_status
-								) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-							`)
-							if err != nil {
-								log.Printf("❌ [EXPORT DEBUG] Failed to prepare statement: %v", err)
-								continue
-							}
-
-							_, err = stmt.Exec(exportID, channelID, organizationID, externalID,
+							// Use direct Exec to avoid prepared statement issues on pooled connections
+							_, err = db.Exec(`
+							INSERT INTO export_products (
+								export_id, channel_id, organization_id, product_id,
+								product_title, product_sku, product_price, product_currency,
+								product_brand, product_category, product_status, export_status
+							) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+						`, exportID, channelID, organizationID, externalID,
 								title, skuValue, price, currency, brand, category, status, "exported")
-							stmt.Close()
 
 							if err != nil {
 								log.Printf("❌ [EXPORT DEBUG] Failed to store product %s: %v", externalID, err)
