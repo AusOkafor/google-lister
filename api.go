@@ -8532,6 +8532,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 						log.Printf("📦 [EXPORT DEBUG] Starting to process product rows...")
 
+						// Start a transaction to avoid prepared statement caching issues with connection pooling
+						tx, txErr := db.Begin()
+						if txErr != nil {
+							log.Printf("❌ [EXPORT DEBUG] Failed to start transaction: %v", txErr)
+							return
+						}
+						defer tx.Rollback() // Will be committed if successful
+
 						for productRows.Next() {
 							rowsProcessed++
 							if rowsProcessed <= 5 || rowsProcessed%20 == 0 {
@@ -8572,7 +8580,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 									exportID, channelID, organizationID)
 							}
 
-							_, err = db.Exec(`
+							_, err = tx.Exec(`
 							INSERT INTO export_products (
 								export_id, channel_id, organization_id, product_id,
 								product_title, product_sku, product_price, product_currency,
@@ -8595,7 +8603,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 								if productCount <= 5 || productCount%10 == 0 {
 									log.Printf("✅ [EXPORT DEBUG] Successfully stored product %d/%d: %s", productCount, productsCount, externalID)
 								}
-								// Periodically update progress metadata
+								// Periodically update progress metadata (outside transaction for visibility)
 								if productCount%10 == 0 {
 									_, _ = db.Exec(`
 									UPDATE export_history
@@ -8609,6 +8617,19 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 								`, productCount, productsCount, exportID)
 								}
 							}
+						}
+
+						// Commit the transaction if we have successful inserts
+						if productCount > 0 {
+							if commitErr := tx.Commit(); commitErr != nil {
+								log.Printf("❌ [EXPORT DEBUG] Failed to commit transaction: %v", commitErr)
+								tx.Rollback()
+							} else {
+								log.Printf("✅ [EXPORT DEBUG] Transaction committed successfully with %d products", productCount)
+							}
+						} else {
+							tx.Rollback()
+							log.Printf("⚠️ [EXPORT DEBUG] No products to commit, rolling back transaction")
 						}
 
 						log.Printf("📊 [EXPORT DEBUG] Product insertion summary: RowsProcessed=%d, Success=%d, Failed=%d, ScanErrors=%d, Expected=%d",
